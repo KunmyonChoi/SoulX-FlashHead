@@ -329,7 +329,8 @@ class Engine:
         # consent, or failed, does not count (it used to, and the false claim got through)
         if getattr(contracts[name], "effect", "read") != "write" or (result.ok and not result.needs_confirmation):
             state.done.add(name)
-        elif result.needs_confirmation:
+        elif result.needs_confirmation or (result.error_type == "not_confirmed" and result.confirmation_text):
+            # asked, or asked again (the answer was unclear): the question the model reads is the tool's own
             state.asked.add(name)
         text = result.text or ""
         if result.needs_confirmation:

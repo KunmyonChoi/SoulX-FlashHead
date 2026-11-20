@@ -126,7 +126,10 @@ def calendar_text(now, language="ko"):
 TEXT = {
     "ko": {
         "speaking": "말하기 규칙: 답변은 그대로 음성으로 읽힙니다. 마크다운, 목록, 번호 매기기, 이모지, "
-                    "괄호 설명을 쓰지 말고 말하듯 문장으로 답하세요.",
+                    "괄호 설명을 쓰지 말고 말하듯 문장으로 답하세요. 사용자의 말은 음성 인식을 거친 글이라 틀릴 수 "
+                    "있습니다. 말이 이상하면 방금 나눈 이야기에서 가장 그럴듯한 뜻을 짐작해 짧게 확인하세요(예: 오전과 "
+                    "오후를 물은 뒤 '우후'라고 들리면 '오후 말씀이시죠?'). 다시 말해 달라고만 되풀이하지 마세요. 무언가를 "
+                    "해 드릴지 물은 뒤 '그래', '응'처럼 짧게 동의하면 다시 묻지 말고 그 일을 하세요.",
         "flow": "반드시 지킬 순서:",
         "prohibitions": "절대 하지 않는 일:",
         "handoff": "상담원에게 넘기는 경우:",
@@ -160,7 +163,10 @@ TEXT = {
     },
     "en": {
         "speaking": "Speaking rules: your reply is read aloud as it is. Use no markdown, lists, numbering, emoji "
-                    "or parenthetical asides; answer in spoken sentences.",
+                    "or parenthetical asides; answer in spoken sentences. The user's words come from speech recognition "
+                    "and may be wrong: if they make no sense, guess the most likely meaning from what was just said and "
+                    "confirm it briefly instead of only asking them to repeat. If you offered to do something and they "
+                    "answer with a short yes, do it without asking again.",
         "flow": "Order you must always follow:",
         "prohibitions": "Things you never do:",
         "handoff": "When to hand over to a human agent:",

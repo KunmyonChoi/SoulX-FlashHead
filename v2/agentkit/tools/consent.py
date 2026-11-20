@@ -14,7 +14,7 @@ import re
 # A refusal, a hold, or a change of mind. Any of these wins over an affirmative in the same
 # utterance ("네, 아니 잠깐만요").
 _NEGATIVE = re.compile(
-    r"아니|아뇨|안\s?돼|안\s?됩|안\s?할|안\s?해|않|취소|잠깐|잠시만|기다려|하지\s?마|하지\s?말|말고|말아|"
+    r"아니|아뇨|안\s?돼|안\s?됩|안\s?할|안\s?해|않|취소|잠깐|잠시만|기다려|하지\s?마|하지\s?말|지\s?마|지\s?말|말고|말아|"
     r"싫|그만|됐어|됐습니다|나중에|다음에|보류|필요\s?없|생각해\s?볼|생각\s?좀|다시\s?생각|몰라|모르겠|글쎄|"
     r"\b(no|nope|nah|not|don'?t|do not|never|cancel|wait|stop|hold on|later)\b",
     re.IGNORECASE)
@@ -33,6 +33,11 @@ _AFFIRM_PHRASE = re.compile(
     r"\b(yes|yeah|yep|yup|sure|ok|okay|please|go ahead|do it|correct|right|confirm|confirmed|agreed?|absolutely)\b",
     re.IGNORECASE)
 
+# The action itself, said as a command: "보내.", "등록해", "추가해 줘", "잡아 주세요" (2026-11-20: "보내." and
+# "등록해" were read as unclear, and the user had to say yes twice). "보내지 마" is caught by _NEGATIVE first.
+_AFFIRM_ACTION = re.compile(
+    r"(?<![가-힣])(보내|등록해|추가해|잡아|넣어|예약해|결제해|저장해|올려)\s?(줘|주세요|주십시오|요|라)?(?![가-힣])")
+
 # "... 해 주세요" about something other than the proposed change: asking to repeat, explain, look
 # up, or be put through. Not a refusal, but not consent either.
 _OTHER_REQUEST = re.compile(
@@ -48,7 +53,7 @@ def read_consent(text):
         return "no"
     if text.endswith(("?", "？")):       # "네?", "얼마라고요?": asking back is not agreeing
         return "unclear"
-    if _AFFIRM_WORD.search(text) or _AFFIRM_PHRASE.search(_OTHER_REQUEST.sub(" ", text)):
+    if _AFFIRM_WORD.search(text) or _AFFIRM_ACTION.search(text) or _AFFIRM_PHRASE.search(_OTHER_REQUEST.sub(" ", text)):
         return "yes"
     return "unclear"
 

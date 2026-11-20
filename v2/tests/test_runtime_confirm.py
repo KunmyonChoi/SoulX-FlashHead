@@ -131,3 +131,25 @@ async def test_the_tools_question_followed_by_a_quoted_text_is_still_its_questio
     engine = Engine(make_definition(guards=[guard]), MiniShop(), FakeRecorder(), llm, now=fixed_now)
     events = await collect(engine, "A1001 환불해 주세요. 뒤 네 자리 1234")
     assert not any(e.type == "replace" for e in events) and events[-1].text == said
+
+
+def test_action_verbs_are_consent_and_their_negations_are_not():
+    from agentkit.tools.consent import read_consent
+    for said in ("보내.", "보내", "보내 줘", "등록해", "추가해", "잡아 주세요", "오케이", "그렇게 해."):
+        assert read_consent(said) == "yes", said
+    for said in ("보내지 마", "등록하지 마세요", "아니 보내지 마", "추가하지 말고"):
+        assert read_consent(said) == "no", said
+    for said in ("보내?", "보내도 돼?", "보내는 거 맞아?"):
+        assert read_consent(said) != "yes", said
+
+
+async def test_an_unclear_answer_then_a_repeat_of_the_tools_question_is_not_cut():
+    # turn 2 is unclear: the engine re-asks, the model also reads the question; neither may be dropped
+    guard = {"id": "confirm_through_tool", "kind": "claims_lookup", "pattern": "(접수할까요)",
+             "unless_tools": ["request_refund"], "nudge": "(시스템 안내)"}
+    engine, llm, gateway = shop(FIRST_TURN + [[text("네. " + ASK)]], guards=[guard])
+    await collect(engine, "A1001 환불해 주세요. 뒤 네 자리 1234, 단순 변심이에요.")
+    events = await collect(engine, "그게요")                       # unclear: the request stays open
+    assert any(e.type == "tool" and e.data.get("state") == "done" and e.data.get("error_type") == "not_confirmed" for e in events)
+    assert not any(e.type == "replace" for e in events)
+    assert events[-1].text.count(ASK) == 1                          # asked once, not appended a second time
