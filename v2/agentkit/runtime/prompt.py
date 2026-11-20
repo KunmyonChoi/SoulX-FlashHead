@@ -137,7 +137,9 @@ TEXT = {
                     "괄호 설명을 쓰지 말고 말하듯 문장으로 답하세요. 사용자의 말은 음성 인식을 거친 글이라 틀릴 수 "
                     "있습니다. 말이 이상하면 방금 나눈 이야기에서 가장 그럴듯한 뜻을 짐작해 짧게 확인하세요(예: 오전과 "
                     "오후를 물은 뒤 '우후'라고 들리면 '오후 말씀이시죠?'). 다시 말해 달라고만 되풀이하지 마세요. 무언가를 "
-                    "해 드릴지 물은 뒤 '그래', '응'처럼 짧게 동의하면 다시 묻지 말고 그 일을 하세요.",
+                    "해 드릴지 물은 뒤 '그래', '응'처럼 짧게 동의하면 다시 묻지 말고 그 일을 하세요. 하겠다고 말한 일은 "
+                    "같은 답 안에서 도구로 하세요. 도구로 할 수 없는 일(나중에 먼저 연락하기, 주기적으로 확인하기, 가진 도구에 "
+                    "없는 검색 등)은 하겠다고 약속하지 말고, 지금은 할 수 없다고 말한 뒤 지금 할 수 있는 일을 권하세요.",
         "flow": "반드시 지킬 순서:",
         "prohibitions": "절대 하지 않는 일:",
         "handoff": "상담원에게 넘기는 경우:",
@@ -174,7 +176,9 @@ TEXT = {
                     "or parenthetical asides; answer in spoken sentences. The user's words come from speech recognition "
                     "and may be wrong: if they make no sense, guess the most likely meaning from what was just said and "
                     "confirm it briefly instead of only asking them to repeat. If you offered to do something and they "
-                    "answer with a short yes, do it without asking again.",
+                    "answer with a short yes, do it without asking again. Do what you say you will do in the same reply, "
+                    "with a tool. Never promise what your tools cannot do (contacting them later on your own, checking "
+                    "on a schedule, searches you have no tool for): say you can't do that now and offer what you can.",
         "flow": "Order you must always follow:",
         "prohibitions": "Things you never do:",
         "handoff": "When to hand over to a human agent:",
@@ -296,6 +300,8 @@ LINES = {
         "touch": "화면에서 {name} 동작을 했습니다",
         "touch_done": "(시스템 안내: 고객이 화면을 눌러 직접 한 동작이며 이미 처리되었습니다. 같은 도구를 다시 호출하지 "
                       "마세요. 바뀐 것만 한 문장으로 짧게 확인하세요.)",
+        "screen_unseen": "(시스템 안내: 지금 고객의 화면에는 이 결과가 보이지 않습니다. '화면에 띄웠다', '화면을 보세요'라고 "
+                         "말하지 말고, 필요한 내용을 말로 짧게 알려 주세요. 목록이면 몇 건인지와 중요한 것 두세 개만 말하고, 더 들을지 물으세요.)",
         "touch_proposed": "(시스템 안내: 고객이 화면을 눌러 요청했고, 아직 실행하지 않았습니다. 확인할 내용이 화면에 떠 있습니다. "
                           "같은 도구를 다시 호출하지 말고, 화면의 내용을 확인하고 단추를 누르거나 '응'이라고 말하면 된다고 한 문장으로 "
                           "말하세요.)",
@@ -324,6 +330,9 @@ LINES = {
         "touch": "did {name} on the screen",
         "touch_done": "(System note: the customer did this by touching the screen and it has already been carried "
                       "out. Do not call the tool again. Acknowledge what changed in one short sentence.)",
+        "screen_unseen": "(System note: the customer's screen does not show this result. Do not say it is on the screen; tell "
+                         "what matters in a few spoken words. For a list, say how many and the two or three that matter, then ask "
+                         "whether to go on.)",
         "touch_proposed": "(System note: the customer asked for this on the screen; it has not been carried out. What "
                           "to confirm is on the screen. Do not call the tool again; say in one sentence that they can "
                           "press the button or say yes.)",

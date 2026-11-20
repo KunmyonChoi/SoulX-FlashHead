@@ -208,6 +208,8 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--focus); }
 .busy { font-size: 12.5px; color: var(--muted); }
 .turn.filler { background: transparent; color: var(--muted); font-size: 13px; padding: 2px 4px; }
 .turn.error { background: var(--rust-soft); color: var(--rust); }
+.video { margin: 0 16px 10px; border-radius: 14px; overflow: hidden; background: var(--sunk); aspect-ratio: 1; max-height: 38vh; align-self: center; width: calc(100% - 32px); max-width: 38vh; }
+.video canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
 </style>
 </head>
 <body>
@@ -221,6 +223,7 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--focus); }
     <div class="seg" role="radiogroup" aria-label="채널">
       <label><input type="radio" name="channel" value="text" checked><span>글</span></label>
       <label><input type="radio" name="channel" value="voice"><span>음성</span></label>
+      <label><input type="radio" name="channel" value="avatar"><span>아바타</span></label>
     </div>
     <label class="keepbox" title="이 대화 하나만 내용까지 기록합니다(개인정보는 가려서). 무엇이 잘못됐는지 모니터에서 볼 때 켜세요."><input type="checkbox" id="keep"> 내용까지 기록</label>
     <button class="btn quiet" id="theme" title="밝게/어둡게">화면 밝기</button>
@@ -230,6 +233,7 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--focus); }
   <aside class="rail" aria-label="대화">
     <div class="face"><div class="avatar" aria-hidden="true">비서</div>
       <div><div style="font-weight:600">업무 비서</div><div class="state" id="agent-state">대화 시작을 누르세요</div></div></div>
+    <div class="video" id="video" hidden><canvas id="canvas" width="512" height="512" aria-label="비서 아바타"></canvas></div>
     <div class="log" id="log" aria-live="polite"></div>
     <div class="choices" id="choices"></div>
     <form class="say" id="say"><label class="sr" for="text">비서에게 할 말</label>
@@ -499,7 +503,8 @@ let replyId = null, replyText = '';
 function onMessage(raw) {
   if (typeof raw !== 'string') { playAudio(raw); return; }
   const m = JSON.parse(raw);
-  if (m.type === 'ready') { S.cfg = m; $('agent-state').textContent = '연결됨 · v' + m.version; $('text').disabled = false; setListen(S.channel === 'voice' ? 'listening' : 'ready'); }
+  if (m.type === 'ready') { S.cfg = m;
+    if (m.width && m.height) { $('canvas').width = m.width; $('canvas').height = m.height; } $('agent-state').textContent = '연결됨 · v' + m.version; $('text').disabled = false; setListen(S.channel !== 'text' ? 'listening' : 'ready'); }
   else if (m.type === 'chat_delta') { if (replyId !== m.id) { replyId = m.id; replyText = ''; } replyText += m.text || ''; caption(replyText); }
   else if (m.type === 'chat_done') {
     busy(''); const text = m.text || replyText; replyId = null; replyText = '';
@@ -514,7 +519,7 @@ function onMessage(raw) {
   else if (m.type === 'notice') toast(m.message || m.text || '');
   else if (m.type === 'error') { addTurn('error', m.message || '오류'); busy(''); }
   else if (m.type === 'listen_state') setListen(m.state);
-  else if (m.type === 'interrupt') stopAudio();
+  else if (m.type === 'interrupt') interrupted(m.seq);
 }
 const TOOL_WORDS = { list_mail: '메일함을 여는 중…', read_mail: '메일을 여는 중…', search_mail: '메일을 찾는 중…', cleanup_mail: '정리하는 중…',
   undo_cleanup: '되돌리는 중…', send_mail: '보낼 메일을 정리하는 중…', cancel_send: '보내기를 멈추는 중…', list_events: '일정을 보는 중…',
@@ -525,30 +530,85 @@ function setListen(state) {
 }
 
 // ---- voice: the microphone in, the assistant's voice out (as on the conversation page) ------------
-let actx = null, mic = null, out = null, playHead = 0, nodes = [];
+let actx = null, mic = null, out = null, playHead = 0, nodes = [], frames = [], minSeq = 0;
+const FPS = () => (S.cfg && S.cfg.fps) || 25;
 const workletSource = `class Capture extends AudioWorkletProcessor { constructor() { super(); this.buf = new Int16Array(${PACKET}); this.n = 0; }
   process(inputs) { const ch = inputs[0][0]; if (ch) { for (let i = 0; i < ch.length; i++) { const s = Math.max(-1, Math.min(1, ch[i]));
     this.buf[this.n++] = s < 0 ? s * 32768 : s * 32767; if (this.n === this.buf.length) { const o = this.buf.slice(); this.port.postMessage(o.buffer, [o.buffer]); this.n = 0; } } }
     return true; } } registerProcessor('capture', Capture);`;
-function playAudio(buf) {
+// "FHAU": <II> seq, byte count, then 16-bit PCM (voice). "FHRT": seq, sample rate, frame count, PCM bytes, infer ms,
+// then PCM and length-prefixed JPEG frames (avatar), as on the conversation page.
+async function playAudio(buf) {
   if (!actx) return;
-  const view = new DataView(buf);
-  if (view.getUint32(0, false) !== 0x46484155) return;     // "FHAU": <II> seq, byte count, then 16-bit PCM
-  const pcm = new Int16Array(buf.slice(12, 12 + view.getUint32(8, true)));
-  const rate = (S.cfg && S.cfg.sample_rate) || SR, b = actx.createBuffer(1, pcm.length, rate), ch = b.getChannelData(0);
-  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
-  const node = actx.createBufferSource(); node.buffer = b; node.connect(out);
-  const t0 = Math.max(playHead, actx.currentTime + 0.06); node.start(t0); playHead = t0 + pcm.length / rate;
-  nodes = nodes.filter(n => n.end > actx.currentTime); nodes.push({ node, end: playHead });
+  const view = new DataView(buf), magic = view.getUint32(0, false), seq = view.getUint32(4, true);
+  if (seq < minSeq) return;                                 // made before an interrupt
+  if (magic === 0x46484155) {
+    const pcm = new Int16Array(buf.slice(12, 12 + view.getUint32(8, true)));
+    const rate = (S.cfg && S.cfg.sample_rate) || SR;
+    schedule(seq, pcm, rate, pcm.length / rate, []);
+    return;
+  }
+  if (magic !== 0x46485254) return;
+  const count = view.getUint32(12, true), bytes = view.getUint32(16, true);
+  let at = 28;
+  const pcm = new Int16Array(buf.slice(at, at + bytes)); at += bytes;
+  const blobs = [];
+  for (let i = 0; i < count && !document.hidden; i++) {
+    const n = view.getUint32(at, true); at += 4;
+    blobs.push(new Blob([new Uint8Array(buf, at, n)], { type: 'image/jpeg' })); at += n;
+  }
+  const pictures = await Promise.all(blobs.map(b => createImageBitmap(b)));
+  if (!actx || seq < minSeq) { pictures.forEach(p => p.close()); return; }
+  schedule(seq, pcm, SR, count / FPS(), pictures);
 }
-function stopAudio() { nodes.forEach(n => { try { n.node.stop(); } catch (e) { /* ended */ } }); nodes = []; playHead = 0; }
+function schedule(seq, pcm, rate, duration, pictures) {
+  const now = actx.currentTime;
+  if (pictures.length && playHead - now > 2.2 * duration) { pictures.forEach(p => p.close()); return; }   // fell behind
+  const t0 = Math.max(playHead, now + 0.06);
+  playHead = t0 + duration;
+  if (pcm.length) {
+    const b = actx.createBuffer(1, pcm.length, rate), ch = b.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+    const node = actx.createBufferSource(); node.buffer = b; node.connect(out); node.start(t0);
+    nodes = nodes.filter(n => n.t0 + n.duration > now - 1); nodes.push({ node, seq, t0, duration });
+  }
+  const lag = actx.outputLatency || 0;
+  pictures.forEach((p, i) => frames.push({ t: t0 + lag + i / FPS(), p }));
+  dropFrames(now);
+}
+// decoded frames live outside the JS heap and are freed only by close(): a hidden tab draws none, so free them here
+function dropFrames(now) { while (frames.length && (frames[0].t < now - 0.2 || frames.length > 120)) frames.shift().p.close(); }
+function stopAudio() {
+  nodes.forEach(n => { try { n.node.stop(); } catch (e) { /* ended */ } }); nodes = []; playHead = 0;
+  frames.forEach(f => f.p.close()); frames = [];
+}
+// the customer spoke over the assistant: stop, and tell the server how far the sound got (it keeps only what was heard)
+function interrupted(firstFresh) {
+  if (actx && S.ws && S.ws.readyState === WebSocket.OPEN) {
+    const now = actx.currentTime;
+    const playing = nodes.filter(n => n.t0 <= now && now < n.t0 + n.duration + 0.05).pop();
+    S.ws.send(JSON.stringify({ type: 'played', seq: playing ? playing.seq : null,
+                               offset: playing ? Math.min(now - playing.t0, playing.duration) : 0 }));
+  }
+  stopAudio(); minSeq = firstFresh || 0;
+}
+const g = $('canvas').getContext('2d');
+(function draw() {
+  if (actx && frames.length) {
+    const now = actx.currentTime;
+    let latest = null;
+    while (frames.length && frames[0].t <= now) { if (latest) latest.p.close(); latest = frames.shift(); }
+    if (latest) { g.drawImage(latest.p, 0, 0, $('canvas').width, $('canvas').height); latest.p.close(); }
+  }
+  requestAnimationFrame(draw);
+})();
 
 async function start() {
   S.channel = document.querySelector('input[name=channel]:checked').value;
   $('toggle').disabled = true;
   try {
     let capture = null;
-    if (S.channel === 'voice') {
+    if (S.channel !== 'text') {
       mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       actx = new AudioContext({ sampleRate: SR });
       await actx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSource], { type: 'application/javascript' })));
@@ -557,7 +617,10 @@ async function start() {
       actx.createMediaStreamSource(mic).connect(capture).connect(silent).connect(actx.destination);
       out = actx.createGain(); out.connect(actx.destination);
     }
-    const q = new URLSearchParams({ agent: AGENT, channel: S.channel });
+    // every screen this page draws (onDisplay): the server tells the agent if a result could not be shown
+    const q = new URLSearchParams({ agent: AGENT, channel: S.channel,
+                                    screen: 'mail_list,mail,confirm,cleanup_report,send_pending,calendar,notice' });
+    $('video').hidden = S.channel !== 'avatar'; minSeq = 0;
     if (VERSION) q.set('version', VERSION);
     if ($('keep').checked) q.set('keep_content', '1');
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?' + q);
@@ -580,6 +643,7 @@ function stop(message) {
   S.running = false;
   if (S.ws) { S.ws.onclose = null; try { S.ws.close(); } catch (e) { /* closed */ } S.ws = null; }
   if (mic) { mic.getTracks().forEach(t => t.stop()); mic = null; }
+  stopAudio();
   if (actx) { actx.close(); actx = null; }
   S.cfg = null; $('text').disabled = true; $('keep-pill').hidden = true; setListen('off'); busy('');
   $('toggle').textContent = '대화 시작'; $('toggle').classList.add('primary');

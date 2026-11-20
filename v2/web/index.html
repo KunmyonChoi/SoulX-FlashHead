@@ -431,6 +431,8 @@ function argsText(args) {
 // ---- the customer's screen (docs/DISPLAY.md): menu, order, confirm and receipt cards ------------
 // Everything here is drawn from `display` payloads, which carry the system's own values. What the agent says
 // never changes it. Open only for agents whose `ready.screen.panels` is not empty.
+// the screens this page draws (Screen.show): the server tells the agent when a result is not shown here
+const SCREEN_KINDS = 'menu,items,cart,confirm,receipt,notice';
 const Screen = {
   on: false,            // this agent has a screen
   cards: false,         // confirm and receipt cards have a place (the menu area)
@@ -1156,7 +1158,8 @@ async function start() {
     const test = $('test').checked;
     const keep = !$('keep-label').hidden && $('keep-content').checked;
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'
-      + qs({ agent: $('agent').value, channel, version: $('version').value, test: test ? 1 : 0, keep_content: keep ? 1 : undefined }));
+      + qs({ agent: $('agent').value, channel, version: $('version').value, test: test ? 1 : 0, keep_content: keep ? 1 : undefined,
+             screen: SCREEN_KINDS }));
     ws.binaryType = 'arraybuffer';
     ws.onmessage = e => { chain = chain.then(() => onMessage(e.data)).catch(err => console.error(err)); };
     ws.onclose = (event) => {

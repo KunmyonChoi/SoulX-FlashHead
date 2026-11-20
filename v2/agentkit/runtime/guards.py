@@ -14,6 +14,9 @@ logger = logging.getLogger("agentkit.runtime")
 WAIT_PROMISE = (
     r"(잠시|잠깐|조금)만?\s?(기다려|기다리)"
     r"|(확인|조회|검색|알아)\S{0,3}\s?(보겠습니다|볼게요|드리겠습니다|드릴게요|하겠습니다|할게요)"
+    # an action promised and not done: "메일 목록을 다시 띄워 드릴게요" with no tool called (2026-11-20)
+    r"|(띄워|띄우|불러\s?와|불러\s?오|보여|열어|가져와|가져오|찾아|읽어|정리해|등록해|보내)\s?(드릴게요|드리겠습니다|올게요|오겠습니다|볼게요|보겠습니다)"
+    r"|(띄울|불러올|가져올|찾을|열)게요"
     r"|\b(one moment|just a moment|please (wait|hold)|let me (check|look))\b"
 )
 WAIT_NUDGE = (
@@ -49,7 +52,10 @@ def is_empty_wait(reply_text):
 
 
 # The promise depends on something the customer still has to give: the turn is theirs, not a wait.
-ASKS_CUSTOMER = re.compile(r"(주시면|하시면|으시면|시다면|말씀해\s?주세요|알려\s?주세요|불러\s?주세요)")
+# "궁금한 내용이 있으면 바로 확인해 드릴게요" is an offer for later, not a wait (2026-11-20: it was taken for one, and
+# the reply was made to go on with a second answer).
+ASKS_CUSTOMER = re.compile(r"(주시면|하시면|으시면|시다면|말씀해\s?주세요|알려\s?주세요|불러\s?주세요|"
+                           r"(있|없|궁금하|필요하|원하|생기)\S{0,2}면|실\s?때|때마다|언제든)")
 
 
 class GuardSet:

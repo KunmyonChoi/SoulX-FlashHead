@@ -273,3 +273,28 @@ async def test_driver_opening_act_and_displays():
     plain = TextConversation(Engine(make_definition(), FakeGateway(SHOP_CONTRACTS), FakeRecorder(), ScriptedLLM()))
     empty = await plain.opening()
     assert empty.text == "" and not empty.displays and not empty.tool_calls
+
+
+# ------------------------------------------------------------------------------------ a page that can't draw a screen
+
+async def test_a_result_the_page_cannot_draw_is_told_to_the_model():
+    engine, llm, gateway, recorder = cafe([[tool("get_menu")], [text("아메리카노와 라떼가 있어요.")]], settings={"screen": "cart,confirm"})
+    await collect(engine, "메뉴 알려 줘")
+    tool_messages = [m for m in llm.calls[1]["messages"] if m["role"] == "tool"]
+    assert "화면에는 이 결과가 보이지 않습니다" in tool_messages[-1]["content"]
+
+
+async def test_every_screen_counts_as_seen_when_the_page_says_nothing():
+    engine, llm, gateway, recorder = cafe([[tool("get_menu")], [text("아메리카노가 있어요.")]])
+    await collect(engine, "메뉴 알려 줘")
+    assert all("보이지 않습니다" not in m["content"] for m in llm.calls[1]["messages"] if m["role"] == "tool")
+
+
+async def test_the_opening_drops_its_screen_sentence_on_a_page_without_that_screen():
+    definition = make_cafe_definition()
+    definition = definition.model_copy(update={"opening": definition.opening.model_copy(update={"say": "메뉴를 화면에 띄웠어요. 무엇을 드릴까요?"})})
+    engine, llm, gateway, recorder = cafe([], definition=definition, settings={"screen": "notice"})
+    events = await gather(engine.open())
+    assert events[-1].text == "무엇을 드릴까요?"
+    engine2, *_ = cafe([], definition=definition)
+    assert (await gather(engine2.open()))[-1].text == "메뉴를 화면에 띄웠어요. 무엇을 드릴까요?"

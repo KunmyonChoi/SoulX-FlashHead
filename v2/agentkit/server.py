@@ -268,6 +268,8 @@ def create_app(engine_factory=None):
         channel = query.get("channel") or "text"
         test = _flag(query.get("test"))
         settings = {key: query[key] for key in ("language", "reply_length") if query.get(key)}
+        if "screen" in query:          # the screens this page can draw, e.g. "menu,cart,confirm" (Engine.screen_kinds)
+            settings["screen"] = query.get("screen") or ""
         if query.get("length"):
             settings["reply_length"] = query["length"]
         if _flag(query.get("keep_content")):

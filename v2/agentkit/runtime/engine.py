@@ -119,6 +119,11 @@ class Engine:
         self._opening_entries = []              # the opening's messages: head of the history, never trimmed
         self._opened = False
         settings = dict(settings or {})
+        # which screens the customer's page can draw ("mail_list,mail,..."); None: not said, every screen counts as
+        # seen. The conversation page with the avatar draws no mail table, and the assistant kept saying "화면에
+        # 띄워 두었어요" over a list nobody could see (2026-11-20).
+        kinds = settings.get("screen")
+        self.screen_kinds = None if kinds is None else {k.strip() for k in str(kinds).split(",") if k.strip()}
         self.set_options(language=settings.get("language"), reply_length=settings.get("reply_length"))
         self._safe(self.recorder.start_session, SessionMeta(
             session_id=self.session_id, agent_id=definition.id, version=definition.version, channel=channel,
@@ -186,6 +191,13 @@ class Engine:
             del self.history[pinned:pinned + excess]
         while len(self.history) > pinned and self.history[pinned]["role"] != "user":
             del self.history[pinned]
+
+    def _unseen(self, result):
+        """True if the result has a screen the customer's page cannot draw."""
+        if self.screen_kinds is None:
+            return False
+        return any(isinstance(e, dict) and e.get("kind") and str(e["kind"]) not in self.screen_kinds
+                   for e in getattr(result, "display", None) or [])
 
     def _display_events(self, state, result):
         """One "display" event (and span) per screen the gateway attached to a tool result. The payload
@@ -561,6 +573,8 @@ class Engine:
                     result, text = await self._call_tool(state, call, turn_language)
                     if note is not None:
                         text = (text + "\n" if text else "") + note(result)
+                    if self._unseen(result):
+                        text = (text + "\n" if text else "") + line("screen_unseen", turn_language)
                     exchange.append({"role": "tool", "tool_name": call["name"], "content": text})
                     round_results.append((call, contract, result))
                     yield self._tool_done(call, result, effect)
@@ -922,6 +936,7 @@ class Engine:
         note = {"role": "user", "content": line("opening", language)}
         entries.append(note)
         self.history.insert(0, note)
+        unseen = False
         try:
             calls = [{"name": call.name, "arguments": dict(call.arguments)} for call in opening.tools]
             if calls:
@@ -933,6 +948,9 @@ class Engine:
                     yield ReplyEvent(type="tool", data={"state": "start", "name": call["name"],
                                                         "arguments": call["arguments"], "effect": effect})
                     result, text = await self._call_tool(state, call, language)
+                    if self._unseen(result):
+                        text = (text + "\n" if text else "") + line("screen_unseen", language)
+                        unseen = True
                     exchange.append({"role": "tool", "tool_name": call["name"], "content": text})
                     yield self._tool_done(call, result, effect)
                     for event in self._display_events(state, result):
@@ -940,6 +958,10 @@ class Engine:
                 position = self._pinned()
                 self.history[position:position] = exchange
                 entries.extend(exchange)
+            if unseen and say:
+                # "읽지 않은 메일을 화면에 띄워 두었어요" on a page that shows no mail: keep only what is still true
+                kept = [s for s in re.split(r"(?<=[.!?。])\s+", say) if not re.search(r"화면|screen", s, re.I)]
+                say = " ".join(kept).strip()
             if say:
                 state.reply["content"] = say
                 position = self._pinned()

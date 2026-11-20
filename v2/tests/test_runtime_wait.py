@@ -10,6 +10,8 @@ from agentkit.runtime.guards import is_empty_wait
     "환불 사유를 상품 분실로 접수해 드릴까요? 확인을 위해 잠시만 기다려 주세요.",
     "조회해 보겠습니다.",
     "Let me check that for you.",
+    "알겠습니다. 메일 목록을 화면에 다시 띄워 드릴게요.",
+    "바로 불러올게요.",
 ])
 def test_reply_ending_on_a_wait_promise_is_caught(text):
     assert is_empty_wait(text)
@@ -23,6 +25,8 @@ def test_reply_ending_on_a_wait_promise_is_caught(text):
     "무선 이어폰 32000원 환불을 접수할까요?",
     "죄송합니다. 주문번호와 휴대폰 번호 뒤 4자리를 다시 확인해 주시면 바로 환불 가능 여부를 확인해 드릴게요.",
     "주문번호를 말씀해 주시면 조회해 보겠습니다.",
+    "대신 가지고 계신 메일이나 일정 중에서 궁금한 내용이 있으면 바로 확인해 드릴게요.",
+    "궁금하실 때 언제든 불러 주시면 바로 확인해 드릴게요.",
     "",
 ])
 def test_reply_that_hands_the_turn_back_is_left_alone(text):
