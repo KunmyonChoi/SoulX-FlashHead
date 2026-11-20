@@ -29,3 +29,5 @@ retries: 0
 filler: "네, 담아 드릴게요."
 display: {kind: cart, path: cart, refresh: [get_cart]}
 adapter: {kind: dummy, target: "cafe:add_to_cart"}
+# 성공하면 모델을 한 번 더 부르지 않고 이 문장으로 바로 답한다(응답 지연 약 1초 단축). 실패하면 모델이 답한다.
+reply: {say: "{spoken} 담았어요.", closing: "더 필요하신 거 있으세요?"}

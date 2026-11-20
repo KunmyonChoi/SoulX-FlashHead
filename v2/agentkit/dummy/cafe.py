@@ -569,6 +569,13 @@ class CafeSystem:
         """ "아메리카노(차갑게, 크게)" """
         return line["name"] + (f"({', '.join(line['options'])})" if line["options"] else "")
 
+    def _spoken_count(self, line, quantity):
+        """ "아이스 아메리카노 두 잔": the item as said aloud, with a native Korean count (for reply templates)."""
+        words = self._spoken(dict(line, quantity=0)).rsplit(" ", 1)[0]
+        unit = self._unit(line["item_id"])
+        native = {1: "한", 2: "두", 3: "세", 4: "네", 5: "다섯", 6: "여섯", 7: "일곱", 8: "여덟", 9: "아홉", 10: "열"}
+        return f"{words} {native[quantity]} {unit}" if quantity in native else f"{words} {quantity}{unit}"
+
     def _spoken(self, line):
         """ "아이스 아메리카노 큰 사이즈 2잔": for the sentence that is read aloud."""
         selected = line["selected"]
@@ -633,7 +640,8 @@ class CafeSystem:
         unit = self._unit(item["id"])
         text = f"{self._label(view)} {_p(f'{quantity}{unit}', '을', '를')} 담았습니다(줄 {view['line_id']}"
         text += f", 이 메뉴는 이제 {view['quantity']}{unit}). " if merged else "). "
-        out = _ok(text + self._total_sentence(cart), {"line": view, "added": quantity, "cart": cart})
+        out = _ok(text + self._total_sentence(cart), {"line": view, "added": quantity, "cart": cart,
+                                                       "spoken": self._spoken_count(view, quantity)})
         out.update(executed=True, repeatable=True)
         return out
 
@@ -681,7 +689,8 @@ class CafeSystem:
         text = f"{self._label(view)} {_p(f'{quantity}{unit}', '을', '를')} 뺐습니다"
         text += f"(줄 {view['line_id']}에 {left['quantity']}{unit} 남음). " if left else ". "
         out = _ok(text + self._total_sentence(cart),
-                  {"line_id": view["line_id"], "removed": quantity, "line": left, "cart": cart})
+                  {"line_id": view["line_id"], "removed": quantity, "line": left, "cart": cart,
+                   "spoken": self._spoken_count(view, quantity)})
         out.update(executed=True, repeatable=True)
         return out
 

@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from .. import config
 from ..contracts import ReplyEvent, SessionMeta, Span, ToolContext, ToolResult, TurnRecord
 from .guards import GuardSet, empty_wait_guard, is_empty_wait
+from .templates import Missing, fill as fill_template
 from .knowledge import BACK_REFERENCE
 from .prompt import (HANDOFF_TOOL, REPLY_LENGTHS, build_system_prompt, clock_text, line, reply_length,
                      speakable, take_piece, text_language, touch_sentence)
@@ -489,6 +490,9 @@ class Engine:
             empty_retry = False
             wait_followed = False   # the empty-wait rule gets one continuation per reply
             confirm_pending = False
+            round_results = []    # (call, contract, result) of the latest tool round
+            filler_held = False   # the filler was skipped because a reply template may answer at once
+            templated = False     # the reply was spoken from tool reply templates, without a model pass
             tool_rounds = 0
             buffer = ""
             answer_started = False
@@ -512,6 +516,7 @@ class Engine:
                 """Runs the calls in order: events, screens, handoff; then the exchange goes into the
                 history. note(result): text added to what the model is told about each result."""
                 nonlocal confirm_pending
+                round_results.clear()
                 exchange = [{"role": "assistant", "content": "",
                              "tool_calls": [{"function": dict(call)} for call in calls]}]
                 for call in calls:
@@ -523,6 +528,7 @@ class Engine:
                     if note is not None:
                         text = (text + "\n" if text else "") + note(result)
                     exchange.append({"role": "tool", "tool_name": call["name"], "content": text})
+                    round_results.append((call, contract, result))
                     yield self._tool_done(call, result, effect)
                     for event in self._display_events(state, result):
                         yield event
@@ -542,6 +548,39 @@ class Engine:
                 self.history[position:position] = exchange
                 state.tool_entries.extend(exchange)
 
+            def template_reply():
+                """The reply spoken straight from the tools' reply templates (contracts.ToolReply), or None
+                when the model has to word it: a call failed or needs consent, a tool has no template, a
+                value is missing, something was said already, or the template is in another language."""
+                if not round_results or reply["content"].strip() or self.handed_off:
+                    return None
+                sentences, closing = [], ""
+                for call, contract, result in round_results:
+                    template = getattr(contract, "reply", None)
+                    if template is None or not result.ok or result.needs_confirmation:
+                        return None
+                    if text_language(template.say) != turn_language:
+                        return None
+                    try:
+                        sentences.append(fill_template(template.say, call["arguments"], result.data))
+                    except Missing as missing:
+                        logger.info(f"[{self.session_id}] reply template of {call['name']} not used: no {missing}")
+                        return None
+                    closing = template.closing or closing
+                parts = [speakable(part) for part in sentences + ([closing] if closing else [])]
+                parts = [part for part in parts if part]
+                return parts or None
+
+            def speak_template(parts, t_start):
+                """Each sentence is its own piece: the voice channel then synthesises (and starts playing)
+                the first one without waiting for the closing question."""
+                state.t_first = state.t_first or time.time()
+                text = " ".join(parts)
+                reply["content"] = text
+                self._span(state, "template", t_start, time.time(), name="+".join(c["name"] for c, _, _ in round_results),
+                           output={"text": text}, attrs={"tools": [c["name"] for c, _, _ in round_results], "saved_pass": True})
+                return [ReplyEvent(type="delta", text=text)] + [ReplyEvent(type="piece", text=part) for part in parts]
+
             touched = False
             if _touch is not None:
                 # The customer did it on the screen: the tool runs now, without the model. The model
@@ -559,8 +598,13 @@ class Engine:
 
                 async for event in tool_round([{"name": action.tool, "arguments": arguments}], note=touch_note):
                     yield event
+                text = template_reply()
+                if text:
+                    for event in speak_template(text, time.time()):
+                        yield event
+                    templated = True
 
-            while pass_number < MAX_TOOL_ROUNDS + 3:
+            while not templated and pass_number < MAX_TOOL_ROUNDS + 3:
                 pass_number += 1
                 # the last pass gets no tools, so the reply cannot loop on lookups; nor does the pass
                 # after a write tool asked for confirmation: that one has to read the sentence out
@@ -599,10 +643,15 @@ class Engine:
                                     arguments = {}
                             call = {"name": str(value.get("name") or ""),
                                     "arguments": arguments if isinstance(arguments, dict) else {}}
-                            if not state.fillered and not answer_started:
+                            contract = contracts.get(call["name"])
+                            template = getattr(contract, "reply", None)
+                            if not state.fillered and not answer_started and not filler_held and template is not None \
+                                    and text_language(template.say) == turn_language:
+                                # its reply template will answer as soon as the call is back: no filler
+                                filler_held = True
+                            elif not state.fillered and not answer_started and not filler_held:
                                 # say something right away; the call and the next pass take a while
                                 state.fillered = True
-                                contract = contracts.get(call["name"])
                                 filler = getattr(contract, "filler", None)
                                 if not filler or text_language(filler) != turn_language:
                                     filler = line("filler", turn_language)  # the contract's line is in another language
@@ -736,8 +785,22 @@ class Engine:
                 if reply["content"].strip():
                     reply["content"] = reply["content"].rstrip() + " "
                 tool_rounds += 1
+                t_round = time.time()
                 async for event in tool_round(calls):
                     yield event
+                text = template_reply()
+                if text:
+                    for event in speak_template(text, t_round):
+                        yield event
+                    break
+                if filler_held and not state.fillered and not answer_started:
+                    # the template could not answer: the model runs again, so cover that pass after all
+                    state.fillered = True
+                    first_call = round_results[0][0]["name"] if round_results else ""
+                    filler = getattr(contracts.get(first_call), "filler", None)
+                    if not filler or text_language(filler) != turn_language:
+                        filler = line("filler", turn_language)
+                    yield ReplyEvent(type="filler", text=filler, data={"name": first_call})
 
             # --- the end of the reply
             spoken = speakable(buffer)

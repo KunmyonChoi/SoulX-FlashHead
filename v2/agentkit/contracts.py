@@ -239,6 +239,21 @@ class DisplaySpec(BaseModel):
     refresh: list[str] = Field(default_factory=list)
 
 
+class ToolReply(BaseModel):
+    """A fixed spoken reply for a successful call, used instead of a second model pass.
+
+    After the model calls a tool, the engine normally runs the model once more to word the answer.
+    For tools whose answer is always the same shape ("아이스 아메리카노 두 잔 담았어요."), that second
+    pass costs about a second and adds nothing. With `reply`, the engine fills `say` from the call's
+    arguments and result and speaks it at once; `closing` is said once after all such sentences of the
+    reply. Placeholders: {path} into {"args": arguments, **result.data}, dotted; filters `|count`
+    (1-10 as native Korean numerals: 두) and `|paren` (a list as "(a, b)" or nothing).
+    The engine falls back to a model pass when the call failed, needs confirmation, a placeholder is
+    missing, the model also said something, or the reply's language is not the template's."""
+    say: str
+    closing: str = ""
+
+
 class ToolContract(BaseModel):
     name: str                                 # what the model calls it; unique inside its pack
     # the pack (one outside system's tools, the folder v2/tools/<pack>/) the contract was read from;
@@ -260,6 +275,7 @@ class ToolContract(BaseModel):
     pii_output: list[str] = Field(default_factory=list)   # dotted paths in `data` holding personal data
     filler: Optional[str] = None              # said at once while the call runs ("주문을 확인해 볼게요.")
     display: Optional[DisplaySpec] = None     # what the customer sees when the call succeeds
+    reply: Optional[ToolReply] = None         # spoken at once on success, skipping the model's second pass
     adapter: AdapterSpec
 
     @property
@@ -344,6 +360,7 @@ SpanKind = Literal[
     "handoff",     # handed to a human: attrs {rule_id, reason}
     "display",     # something was put on the customer's screen: name = kind, output {data}, attrs {source}
     "action",      # the customer touched the screen: name = action name, input {arguments}, attrs {tool}
+    "template",    # a reply built from tool reply templates without a model pass: output {text}, attrs {tools, saved_pass}
 ]
 SessionStatus = Literal["active", "completed", "handoff", "abandoned", "error"]
 

@@ -103,6 +103,15 @@ def search_menu(arguments, ctx):
               items=len(found))
 
 
+_NATIVE = {1: "한", 2: "두", 3: "세", 4: "네", 5: "다섯", 6: "여섯", 7: "일곱", 8: "여덟", 9: "아홉", 10: "열"}
+
+
+def _spoken(line, quantity):
+    """ "불고기버거 세트 두 개": the line as said aloud (for reply templates)."""
+    text = line["name"] + (" 세트" if line.get("set") else "") + (" 라지" if line.get("large") else "")
+    return f"{text} {_NATIVE[quantity]} 개" if quantity in _NATIVE else f"{text} {quantity}개"
+
+
 def _line_text(line):
     text = line["name"]
     if line.get("set"):
@@ -167,7 +176,7 @@ def add_to_cart(arguments, ctx):
     else:
         cart.append(line)
     view = _cart_view(session_id)
-    return ok(f"담았습니다: {_line_text(dict(line, quantity=quantity))}. {_cart_sentence(view)}", {"added": quantity, "cart": view},
+    return ok(f"담았습니다: {_line_text(dict(line, quantity=quantity))}. {_cart_sentence(view)}", {"added": quantity, "cart": view, "spoken": _spoken(line, quantity)},
               executed=True, repeatable=True)
 
 
@@ -187,7 +196,7 @@ def remove_from_cart(arguments, ctx):
         cart.remove(line)
         removed = line["quantity"]
     view = _cart_view(session_id)
-    return ok(f"뺐습니다: {line['name']} {removed}개. {_cart_sentence(view)}", {"removed": removed, "cart": view},
+    return ok(f"뺐습니다: {line['name']} {removed}개. {_cart_sentence(view)}", {"removed": removed, "cart": view, "spoken": _spoken(line, removed)},
               executed=True, repeatable=True)
 
 

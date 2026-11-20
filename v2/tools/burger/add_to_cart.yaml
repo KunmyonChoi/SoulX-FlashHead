@@ -21,3 +21,5 @@ timeout_s: 4.0
 retries: 0
 filler: "네, 넣어 드릴게요."
 adapter: {kind: python, target: "agentkit.dummy.burger:add_to_cart"}
+# 성공하면 모델을 한 번 더 부르지 않고 이 문장으로 바로 답한다(응답 지연 약 1초 단축). 실패하면 모델이 답한다.
+reply: {say: "{spoken} 넣었어요.", closing: "더 주문하실 거 있으세요?"}
