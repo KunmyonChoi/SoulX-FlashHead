@@ -62,3 +62,13 @@ async def test_private_engine_logs_no_content(caplog):
     with caplog.at_level(logging.INFO, logger="agentkit.runtime"):
         await collect(engine, "김민수 계약서 메일 찾아줘")
     assert "search_mail" in caplog.text and "김민수" not in caplog.text and "<7자>" in caplog.text
+
+
+def test_keep_content_for_one_conversation_overrides_the_agent_setting():
+    from agentkit.runtime import Engine
+    from runtime_fakes import FakeGateway, FakeRecorder, ScriptedLLM, fixed_now, make_definition
+    definition = make_definition(privacy={"store_content": False})
+    kept = FakeRecorder(); Engine(definition, FakeGateway([]), kept, ScriptedLLM(), now=fixed_now, settings={"keep_content": True})
+    default = FakeRecorder(); Engine(definition, FakeGateway([]), default, ScriptedLLM(), now=fixed_now)
+    assert kept.sessions[0].store_content is True and kept.sessions[0].settings["keep_content"] is True
+    assert default.sessions[0].store_content is False

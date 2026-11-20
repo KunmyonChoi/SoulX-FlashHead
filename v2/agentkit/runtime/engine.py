@@ -123,7 +123,8 @@ class Engine:
         self._safe(self.recorder.start_session, SessionMeta(
             session_id=self.session_id, agent_id=definition.id, version=definition.version, channel=channel,
             test=self.test, simulated=self.simulated, started_at=time.time(), label=label,
-            store_content=self.simulated or bool(getattr(getattr(definition, "privacy", None), "store_content", True)),
+            store_content=self.simulated or bool(getattr(getattr(definition, "privacy", None), "store_content", True))
+            or settings.get("keep_content") is True,
             settings={"model": definition.llm.model, "language": self.language or definition.language,
                       "reply_length": self.reply_length or definition.reply_length, **settings}))
 

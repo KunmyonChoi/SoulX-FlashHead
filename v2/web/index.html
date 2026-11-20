@@ -20,6 +20,9 @@
   </div>
   <label class="bar-field" id="test-label" title="켜면 이 대화의 글과 음성이 저장됩니다. 모니터에서 다시 듣고, 잘못 알아들은 말을 골라 음성 인식을 고치는 데 씁니다. 끄면 음성은 저장되지 않습니다.">
     <input type="checkbox" id="test"> 녹음해서 품질 개선에 쓰기</label>
+  <label class="bar-field keep-content" id="keep-label" hidden
+         title="이 에이전트는 메일·일정 같은 개인 내용을 기록하지 않습니다. 켜면 이번 대화 하나만 글(개인정보는 가려서)과, 위 녹음이 켜져 있으면 음성까지 저장해 모니터에서 무엇이 잘못됐는지 볼 수 있습니다. 기억되지 않으며 대화마다 새로 켜야 합니다.">
+    <input type="checkbox" id="keep-content"> 이 대화는 내용까지 기록 (진단용)</label>
   <div class="bar-right">
     <span class="engine" id="engine" hidden>
       <span class="engine-state" id="engine-state" role="status">엔진 확인 중</span>
@@ -117,7 +120,7 @@
     </select></label></div>
 </aside>
 
-<script src="/web/common.js?v=auth1"></script>
+<script src="/web/common.js?v=keep1"></script>
 <script>
 'use strict';
 const SR = 16000;
@@ -916,6 +919,15 @@ function whyBlocked(agent) {
 }
 
 const RECORD_KEY = 'agentkit.record';
+
+// An agent that keeps no content of real conversations (definition.privacy.store_content false: the office
+// assistant with the user's mail and calendar) offers to keep it for one conversation, to find what went
+// wrong. Off by default, never remembered, cleared whenever the agent or version changes.
+function showKeepContent() {
+  const privateAgent = !!(definition && definition.privacy && definition.privacy.store_content === false);
+  $('keep-label').hidden = !privateAgent;
+  $('keep-content').checked = false;
+}
 async function init() {
   if (!$('nav').children.length) mountNav('talk');
   applyChannel();
@@ -956,7 +968,7 @@ async function init() {
 async function loadAgent(wantVersion) {
   const id = $('agent').value, ticket = ++agentLoad;
   const agent = agents.find(a => a.id === id);
-  definition = null;
+  definition = null; showKeepContent();
   $('toggle').disabled = true; $('restart').disabled = true;
   $('version').disabled = true;
   $('flow-caption').textContent = '';
@@ -984,7 +996,7 @@ async function loadDefinition() {
   const id = $('agent').value, ticket = ++agentLoad;
   const chosen = $('version').value;
   const n = chosen || stableVersion;
-  definition = null;
+  definition = null; showKeepContent();
   // The agent's bare tool names mean the tools of its packs (the cafe and the burger shop both have a
   // "search_menu"), so the contracts are asked for per set of packs.
   const row = agents.find(a => a.id === id) || {};       // loadAgents keeps the server row in .raw
@@ -1000,6 +1012,7 @@ async function loadDefinition() {
     try {
       const body = await api('/api/agents/' + encodeURIComponent(id) + '/versions/' + n);
       definition = (body && body.definition) || body;
+      showKeepContent();
     } catch (err) {
       problem = err.kind === 'missing' ? '정의서 조회 기능이 설치되지 않아 도구 목록을 미리 보여 줄 수 없습니다. 대화는 할 수 있습니다.'
         : '정의서를 불러오지 못했습니다 (' + err.message + '). 대화는 할 수 있습니다.';
@@ -1105,7 +1118,7 @@ function applyChannel() {
 // ---- session -----------------------------------------------------------------------------------
 function lockControls(locked) {
   document.querySelectorAll('input[name=channel]').forEach(node => { node.disabled = locked || (node.value === 'avatar' && $('avatar-option').title !== ''); });
-  $('agent').disabled = locked; $('test').disabled = locked;
+  $('agent').disabled = locked; $('test').disabled = locked; $('keep-content').disabled = locked;
   $('version').disabled = locked || $('version').options.length < 2;
 }
 
@@ -1141,8 +1154,9 @@ async function start() {
     $('trace').replaceChildren();
     Screen.clear();
     const test = $('test').checked;
+    const keep = !$('keep-label').hidden && $('keep-content').checked;
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'
-      + qs({ agent: $('agent').value, channel, version: $('version').value, test: test ? 1 : 0 }));
+      + qs({ agent: $('agent').value, channel, version: $('version').value, test: test ? 1 : 0, keep_content: keep ? 1 : undefined }));
     ws.binaryType = 'arraybuffer';
     ws.onmessage = e => { chain = chain.then(() => onMessage(e.data)).catch(err => console.error(err)); };
     ws.onclose = (event) => {

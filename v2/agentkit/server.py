@@ -269,6 +269,10 @@ def create_app(engine_factory=None):
         settings = {key: query[key] for key in ("language", "reply_length") if query.get(key)}
         if query.get("length"):
             settings["reply_length"] = query["length"]
+        if _flag(query.get("keep_content")):
+            # the owner chose, for this one conversation, to keep its content although the agent normally
+            # keeps none (definition.privacy): for finding what went wrong. Masked like any other record.
+            settings["keep_content"] = True
 
         async def refuse(message):
             try:
