@@ -1,0 +1,23 @@
+# 지식베이스(Tech Trend)를 모델이 정한 검색어로 찾는다. 정의서의 knowledge.mode가 "tool"일 때 쓴다:
+# 매 턴 사용자의 말을 그대로 검색해 붙이는 대신, 모델이 지식베이스가 필요하다고 볼 때만 부른다.
+name: search_knowledge
+description: 지식베이스에 저장된 기술 동향 자료를 내용으로 찾는다. 사용자가 지식베이스나 저장된 자료를 찾아 달라고 하거나, 앞서 지식베이스에서 소개한 자료를 더 묻거나, 뉴스·인터넷이 아니라 정리된 기술 자료가 필요한 질문일 때 쓴다. 최신 뉴스, 인터넷 검색, 날씨를 원하면 쓰지 않는다. 날짜로 자료 목록을 볼 때는 list_knowledge_by_date를 쓴다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: '찾을 내용을 담은 검색어. 사용자의 말을 그대로 넣지 말고 대화의 맥락에서 주제를 정한다. 예: "LongCat-Video 영상 생성 모델", "음성 합성 오픈소스"'
+  required: [query]
+output_schema:
+  type: string
+  description: 모델에 전할 글 (찾은 자료 또는 없다는 안내)
+timeout_s: 4.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 지식베이스에서 찾아볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.v1_lookup:search_knowledge

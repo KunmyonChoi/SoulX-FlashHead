@@ -21,6 +21,25 @@ BACK_REFERENCE = re.compile(
     r"\b(the (first|second|third|last) one|that one|you just (said|mentioned))\b", re.I)
 
 
+# The user names the knowledge base: search it before the reply in either mode.
+ASKS_KNOWLEDGE = re.compile(r"지식\s?베이스|지식에서|자료에서|저장(된|해 둔|한)\s?(글|자료)|등록(된|한)\s?(글|자료)|"
+                            r"knowledge base", re.I)
+# The user asks for another source: put no knowledge-base material in front ("자동차 관련 뉴스" was answered
+# from a stored document instead of the news, 2026-11-20).
+ASKS_ELSEWHERE = re.compile(r"인터넷|웹에서|온라인|구글|뉴스|기사|위키|긱\s?뉴스|날씨|\bweb\b|internet|news|wikipedia",
+                            re.I)
+
+
+def knowledge_first(text, mode):
+    """Whether this turn searches the knowledge base before the reply: "before_reply" unless the user asks
+    for another source, "tool" only when the user names the knowledge base."""
+    if ASKS_KNOWLEDGE.search(text or ""):
+        return True
+    if mode == "tool" or ASKS_ELSEWHERE.search(text or ""):
+        return False
+    return True
+
+
 # WeKnora answers in 0.2-0.35 s as a rule, but about one search in ten takes 1.7 s, and after five
 # idle minutes its embedding model is unloaded and the next search takes 3.5-5 s. With a 1.5 s limit
 # both showed up as "시간 초과" and the reply went out without reference material.

@@ -38,12 +38,13 @@ def test_folder_layout_and_load(store, agent):
 
 @pytest.mark.parametrize("agent", ["tech-trend-anchor", "shop-support"])
 def test_main_agents_are_deployed(store, agent):
-    info = next(v for v in store.list_versions(agent) if v.version == 1)   # later drafts may exist
+    deployment = store.deployment(agent)                        # which version is a release decision
+    stable = deployment.stable
+    info = next(v for v in store.list_versions(agent) if v.version == stable)
     assert info.state == "deployed" and info.approved_by
-    deployment = store.deployment(agent)
-    assert deployment.stable == 1 and deployment.canary is None
-    assert store.load(agent).version == 1                       # version None -> stable
-    assert store.resolve(agent, "any-session") == 1
+    assert deployment.canary is None
+    assert store.load(agent).version == stable                  # version None -> stable
+    assert store.resolve(agent, "any-session") == stable
 
 
 @pytest.mark.parametrize("agent", [KIOSK, *SKELETONS])

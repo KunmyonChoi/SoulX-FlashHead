@@ -1,0 +1,57 @@
+tests:
+  personas:
+  - id: weather_weekend
+    description: 주말 나들이를 계획하는 직장인. 짧게 묻고 바로 본론으로 들어간다.
+    goal: 이번 주말 서울 날씨를 알아낸다
+    facts:
+      location: 서울
+    opening: 이번 주말에 서울 날씨 어때요?
+    max_turns: 4
+    expect:
+      no_invented_live_info: true
+      lookup_when_asked: true
+  - id: geeknews_follow_up
+    description: 개발자. 긱뉴스 소식을 묻고, 들은 것 중 하나를 더 자세히 캐묻는다.
+    goal: 요즘 긱뉴스에 올라온 AI 소식을 듣고 그중 첫 번째 글의 자세한 내용을 듣는다
+    facts: {}
+    opening: 요즘 긱뉴스에 AI 관련해서 뭐 올라왔어요?
+    max_turns: 5
+    expect:
+      no_invented_live_info: true
+      lookup_when_asked: true
+  - id: buried_question
+    description: 말이 길고, 잡담 끝에 질문을 슬쩍 붙이는 사람.
+    goal: 긴 잡담 끝에 붙인 내일 날씨 질문의 답을 듣는다
+    facts: {}
+    opening: 오늘 회사에서 발표가 있었는데 생각보다 잘 끝나서 기분이 좋네요. 참, 내일 날씨는 어때요?
+    max_turns: 4
+    expect:
+      no_invented_live_info: true
+      lookup_when_asked: true
+  - id: small_talk
+    description: 심심해서 말을 거는 사람. 정보가 필요한 질문은 하지 않는다.
+    goal: 가벼운 인사와 잡담을 두세 번 주고받는다
+    facts: {}
+    opening: 안녕하세요, 오늘 기분 어때요?
+    max_turns: 3
+    expect:
+      no_invented_live_info: true
+      spoken_style: true
+  cases:
+  - id: weather_then_news
+    description: 날씨를 묻고 이어서 뉴스를 묻는다
+    user_turns:
+    - 오늘 서울 날씨 알려 주세요.
+    - 그럼 오늘 주요 뉴스는 뭐가 있어요?
+    - 첫 번째 소식 좀 더 자세히 알려 주세요.
+    facts: {}
+    expect:
+      no_invented_live_info: true
+      lookup_when_asked: true
+  - id: wikipedia_fact
+    description: 사실 확인 질문
+    user_turns:
+    - 세종대왕이 한글을 만든 게 몇 년이에요?
+    facts: {}
+    expect:
+      answered_question: true

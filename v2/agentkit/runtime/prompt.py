@@ -153,6 +153,10 @@ TEXT = {
         "panels_join": "와 ",
         "knowledge": "사용자의 말 앞에 '{name}' 지식베이스에서 찾은 '참고 자료'가 붙어 있으면, 질문과 관련이 "
                      "있을 때 그 자료를 근거로 답하세요.",
+        "knowledge_tool": "'{name}' 지식베이스는 미리 찾아 주지 않습니다. 사용자가 지식베이스나 저장된 자료를 원할 때, "
+                          "또는 앞서 지식베이스에서 소개한 자료를 더 물을 때 search_knowledge를 부르세요. 검색어는 "
+                          "사용자의 말을 그대로 쓰지 말고 지금 이야기하는 주제로 정하세요. 뉴스, 인터넷, 최신 소식을 "
+                          "원하면 지식베이스를 쓰지 말고 그에 맞는 도구를 쓰세요.",
     },
     "en": {
         "speaking": "Speaking rules: your reply is read aloud as it is. Use no markdown, lists, numbering, emoji "
@@ -187,6 +191,10 @@ TEXT = {
         "panels_join": " and ",
         "knowledge": "If 'reference material' from the '{name}' knowledge base is placed in front of the user's "
                      "message, base your answer on it when it is relevant to the question.",
+        "knowledge_tool": "The '{name}' knowledge base is not searched for you in advance. Call search_knowledge "
+                          "when the user wants the knowledge base or stored material, or asks more about material "
+                          "from it. Choose the query from the topic being discussed, not the user's words as they "
+                          "are. For news, the internet or current events use the matching tool instead.",
     },
 }
 # Added after a persona written in another language, when this turn is in English (language "auto").
@@ -202,7 +210,7 @@ def _bullets(lines):
 
 
 def build_system_prompt(definition, *, language="ko", length=None, now=None, contracts=None,
-                        knowledge_name=""):
+                        knowledge_name="", knowledge_mode="before_reply"):
     """The system prompt of one reply.
 
     language: "ko" or "en", the language of this turn (already resolved from "auto").
@@ -244,6 +252,8 @@ def build_system_prompt(definition, *, language="ko", length=None, now=None, con
             rules.append(text["write"].format(names=", ".join(two_phase)))
     if knowledge_name:
         rules.append(text["knowledge"].format(name=knowledge_name))
+        if knowledge_mode == "tool" and "search_knowledge" in (contracts or {}):
+            rules.append(text["knowledge_tool"].format(name=knowledge_name))
     if rules:
         parts.append(text["tools"] + "\n" + _bullets(rules))
     if definition.live_clock and now is not None:                                          # 8

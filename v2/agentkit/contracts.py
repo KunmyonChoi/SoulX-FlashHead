@@ -48,6 +48,11 @@ class KnowledgeSettings(BaseModel):
     name: str = ""                  # shown to people and named in the prompt
     kb_id: str = ""
     threshold: float = 0.4
+    # before_reply: the user's words are searched before every reply and the hits put in front of them.
+    # tool: nothing is searched in advance; the model calls search_knowledge with a query of its own when
+    #       the knowledge base is what the user wants (an explicit "지식베이스에서 ..." is still searched first).
+    # In both modes a turn that asks for the internet or the news gets no knowledge-base material in front.
+    mode: Literal["before_reply", "tool"] = "before_reply"
 
 
 class FlowRule(BaseModel):

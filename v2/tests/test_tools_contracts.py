@@ -12,7 +12,7 @@ from agentkit.tools.validate import check_schema
 
 SHOP = ["verify_customer", "get_order", "track_delivery", "request_refund", "handoff_to_human"]
 V1 = ["get_weather", "search_news", "get_news_detail", "search_geeknews", "read_geeknews",
-      "search_wikipedia", "list_knowledge_by_date"]
+      "search_wikipedia", "list_knowledge_by_date", "search_knowledge"]
 CAFE = ["get_menu", "search_menu", "get_cart", "add_to_cart", "remove_from_cart", "apply_coupon", "request_payment"]
 WEB = ["web_task", "web_task_answer", "web_task_confirm"]      # office-assistant: the browser service (v2/browser)
 # the dummy clinic, burger shop and airline (agentkit/dummy), reached through python adapters

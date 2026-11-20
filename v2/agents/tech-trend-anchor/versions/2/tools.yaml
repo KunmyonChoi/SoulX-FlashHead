@@ -1,0 +1,11 @@
+tool_packs:
+- lookup
+tools:
+- get_weather
+- search_news
+- get_news_detail
+- search_geeknews
+- read_geeknews
+- search_wikipedia
+- list_knowledge_by_date
+- search_knowledge

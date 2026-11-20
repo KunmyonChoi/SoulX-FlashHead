@@ -19,7 +19,8 @@ from .. import config
 from ..contracts import ReplyEvent, SessionMeta, Span, ToolContext, ToolResult, TurnRecord
 from .guards import GuardSet, empty_wait_guard, is_empty_wait
 from .templates import Missing, fill as fill_template
-from .knowledge import BACK_REFERENCE
+from .knowledge import ASKS_ELSEWHERE, ASKS_KNOWLEDGE, BACK_REFERENCE, knowledge_first
+from .situation import situation as situation_note
 from .prompt import (HANDOFF_TOOL, REPLY_LENGTHS, build_system_prompt, clock_text, line, reply_length,
                      speakable, take_piece, text_language, touch_sentence)
 
@@ -265,14 +266,17 @@ class Engine:
             return setting
         return heard if heard in ("ko", "en") else text_language(user_text)
 
-    def _messages(self, system, state, clock, reference, question):
+    def _messages(self, system, state, clock, reference, question, note=""):
         messages = [{"role": "system", "content": system}]
         for message in self.history:
             if message is state.reply:
                 continue
-            if message is state.user_message and (clock or reference):
-                # the clock goes here, not in the system prompt: see prompt.py
+            if message is state.user_message and (clock or reference or note):
+                # the clock goes here, not in the system prompt: see prompt.py (the same for the note on where
+                # the conversation stands: it changes every turn and would spoil the cached system prompt)
                 content = f"{reference}\n{question}{message['content']}" if reference else message["content"]
+                if note:
+                    content = f"{note}\n{content}"
                 message = {**message, "content": f"{clock}\n{content}" if clock else content}
             messages.append(dict(message))
         return messages
@@ -432,8 +436,13 @@ class Engine:
 
             # --- knowledge: goes in front of the user's message of this turn only
             reference = ""
-            if self.knowledge is not None and user_text and _touch is None and not _notice:
-                if BACK_REFERENCE.search(user_text):
+            mode = getattr(definition.knowledge, "mode", "before_reply")
+            if self.knowledge is not None and user_text and _touch is None and not _notice \
+                    and not knowledge_first(user_text, mode):
+                yield ReplyEvent(type="knowledge", data={"state": "skipped", "mode": mode})
+                self._reference = ""
+            elif self.knowledge is not None and user_text and _touch is None and not _notice:
+                if BACK_REFERENCE.search(user_text) and mode == "before_reply":
                     reference = self._reference
                     yield ReplyEvent(type="knowledge", data={"state": "reused", "has": bool(reference)})
                 else:
@@ -464,6 +473,10 @@ class Engine:
 
             # --- prompt
             contracts = self._tool_contracts() if await self._tools_usable() else {}
+            if user_text and ASKS_ELSEWHERE.search(user_text) and not ASKS_KNOWLEDGE.search(user_text) \
+                    and "search_knowledge" in contracts:
+                # "인터넷에서 검색해줘": the model was seen picking the knowledge base anyway (2026-11-20)
+                contracts = {name: c for name, c in contracts.items() if name != "search_knowledge"}
             specs = []
             if contracts:
                 try:
@@ -473,7 +486,8 @@ class Engine:
                     contracts = {}
             system = build_system_prompt(
                 definition, language=turn_language, length=length, now=now, contracts=contracts,
-                knowledge_name=definition.knowledge.name if self.knowledge is not None else "")
+                knowledge_name=definition.knowledge.name if self.knowledge is not None else "",
+                knowledge_mode=getattr(definition.knowledge, "mode", "before_reply"))
             # What this conversation has already established (gateway facts, e.g. "verified"). Without
             # it the model was seen asking a verified customer for the order number three more times.
             try:
@@ -491,6 +505,15 @@ class Engine:
                         system += ("\n이 대화에서 이미 끝난 절차: " + ", ".join(done) + " 성공. 이 절차를 고객에게 다시 요구하지 "
                                    "말고, 이것이 필요했던 도구를 바로 호출해 이어 가세요.")
             question = line("question", turn_language)
+            # where the conversation stands, from the history before this turn (situation.py)
+            note = ""
+            if getattr(definition, "situation_note", True) and not _touch:
+                try:
+                    before = self.history[:self.history.index(state.user_message)] \
+                        if state.user_message in self.history else list(self.history)
+                    note = situation_note(before, turn_language)
+                except Exception as e:
+                    logger.warning(f"Situation note failed: {e!r}")
 
             # --- generation: text, or tool calls and another pass
             nudge = []            # a one-off correction after a guard; not kept in the history
@@ -633,7 +656,7 @@ class Engine:
                 # after a write tool asked for confirmation: that one has to read the sentence out
                 tools = specs if specs and tool_rounds < MAX_TOOL_ROUNDS and not confirm_pending \
                     and not self.handed_off and not touched else None
-                messages = self._messages(system, state, clock, reference, question) + nudge
+                messages = self._messages(system, state, clock, reference, question, note) + nudge
                 calls = []
                 pass_text = ""
                 first_token_ms = None

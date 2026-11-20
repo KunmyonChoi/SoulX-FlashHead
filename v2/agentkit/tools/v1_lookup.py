@@ -196,3 +196,38 @@ async def list_knowledge_by_date(arguments, ctx):
     except httpx.HTTPError as e:
         raise AdapterUnavailable(f"{type(e).__name__}: {e}")
     return describe_knowledge(items, date, tz)
+
+
+async def search_knowledge(arguments, ctx):
+    """The knowledge base searched with the model's own query (definition knowledge.mode "tool").
+
+    Unlike the search that runs before every reply with the user's words as they are, the model picks
+    the query from what the conversation is about ("자세히 알아봐 줘" -> "LongCat-Video 상세")."""
+    from ..runtime.knowledge import SEARCH_TIMEOUT, knowledge_context
+    query = str(arguments.get("query") or "").strip()
+    if not query:
+        raise ToolFailure("invalid_input", "검색어가 없습니다. 무엇을 찾을지 검색어를 정해 다시 호출하세요.")
+    key = _weknora_key()
+    if not key:
+        raise ToolFailure("system_error", "지식베이스에 연결할 열쇠가 없어 찾을 수 없습니다. 지금은 확인이 어렵다고 말하세요.")
+    kb_id = os.environ.get("AGENTKIT_WEKNORA_KB", DEFAULT_KB_ID)
+    url = f"{str(config.WEKNORA_URL).rstrip('/')}/knowledge-search"
+    try:
+        async with httpx.AsyncClient(headers={"X-API-Key": key}) as client:
+            response = await client.post(url, json={"query": query, "knowledge_base_id": kb_id, "match_count": 5},
+                                         timeout=SEARCH_TIMEOUT)
+    except httpx.TimeoutException:
+        raise AdapterUnavailable("timeout")
+    if response.status_code in (401, 403):
+        raise ToolFailure("permission_denied", "지식베이스가 접근을 거절했습니다. 지금은 찾기 어렵다고 말하세요.")
+    if response.status_code != 200:
+        raise AdapterUnavailable(f"HTTP {response.status_code}")
+    hits = [{"title": h.get("knowledge_title") or "", "content": h.get("content") or "",
+             "score": float(h.get("score") or 0.0), "kind": h.get("chunk_type") or "text"}
+            for h in (response.json().get("data") or [])]
+    hits.sort(key=lambda hit: -hit["score"])
+    threshold = 0.4
+    block, titles = knowledge_context(hits, threshold, "Tech Trend")
+    if not block:
+        return f"지식베이스에서 '{query}'와 관련된 자료를 찾지 못했습니다. 지식베이스에 없다고 말하고, 필요하면 다른 도구를 쓰세요."
+    return block

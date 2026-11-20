@@ -1,0 +1,17 @@
+{
+  "agent_id": "tech-trend-anchor",
+  "version": 2,
+  "state": "draft",
+  "created_at": 1795153192.6068609,
+  "created_by": "claude",
+  "based_on": 1,
+  "note": "지식베이스를 도구로: 매 턴 미리 붙이지 않고 모델이 search_knowledge를 맥락에 맞는 검색어로 부른다 (knowledge.mode=tool)",
+  "safety_change": true,
+  "changed_fields": [
+    "knowledge",
+    "tools"
+  ],
+  "test_run_id": null,
+  "approved_by": null,
+  "approved_at": null
+}
