@@ -76,6 +76,58 @@ def is_backchannel(text):
     return bool(BACKCHANNEL.match(re.sub(r"[\s.,!?~…]", "", text)))
 
 
+# A short answer to a yes/no question. Said right after the question, it must not be lost as noise, as a
+# listener's backchannel, or as the agent's own echo.
+SHORT_ANSWER = re.compile(r"^(네|예|응|어|좋아|좋아요|좋습니다|그래|그래요|그러죠|맞아|맞아요|오케이|알겠어요|알겠습니다|"
+                          r"해줘|해주세요|아니|아니요|아뇨|싫어|싫어요|됐어|됐어요)+$")
+
+
+def bare(text):
+    return re.sub(r"[\s.,!?~…'\"]", "", text or "")
+
+
+def is_short_answer(text):
+    return bool(SHORT_ANSWER.match(bare(text)))
+
+
+# What Whisper writes for silence or faint noise in Korean (it learnt them from video subtitles). Heard with
+# little speech in the audio or low confidence, such a line is not the customer talking.
+HALLUCINATION = re.compile(r"^(감사합니다|고맙습니다|시청해주셔서감사합니다|구독과좋아요.*|좋아요와구독.*|"
+                           r"다음영상에서만나요|MBC뉴스.*|자막.*|thankyou|thanksforwatching)+$", re.I)
+HALLUCINATION_MIN_SPEECH = 0.5     # seconds of speech the voice detector finds in the utterance
+HALLUCINATION_MIN_LOGPROB = -0.4   # Whisper's average log-probability
+_speech_vad = None
+
+
+def speech_seconds(audio, sample_rate=16000):
+    """Seconds of speech Silero finds in a whole utterance (float32 or int16 samples)."""
+    global _speech_vad
+    import numpy as np
+    import torch
+    from silero_vad import get_speech_timestamps, load_silero_vad
+    if _speech_vad is None:
+        _speech_vad = load_silero_vad()
+    x = np.asarray(audio)
+    if x.dtype != np.float32:
+        x = x.astype(np.float32) / 32768.0
+    stamps = get_speech_timestamps(torch.from_numpy(x), _speech_vad, sampling_rate=sample_rate)
+    return sum(s["end"] - s["start"] for s in stamps) / sample_rate
+
+
+def is_hallucination(text, speech_s=None, avg_logprob=None):
+    """A subtitle line Whisper made up: "감사합니다." with almost no speech in it, or with low confidence."""
+    if not HALLUCINATION.match(bare(text)):
+        return False
+    return (speech_s is not None and speech_s < HALLUCINATION_MIN_SPEECH) or \
+        (avg_logprob is not None and avg_logprob < HALLUCINATION_MIN_LOGPROB)
+
+
+def is_echo(text, agent_text):
+    """The microphone heard the end of the agent's own words (speakers, no headphones), not the customer."""
+    heard = bare(text)
+    return len(heard) >= 2 and not SHORT_ANSWER.match(heard) and heard in bare(agent_text)[-40:]
+
+
 def text_language(text):
     """"ko" if the text has any Hangul, else "en"."""
     return "ko" if HANGUL.search(text) else "en"

@@ -101,6 +101,50 @@ def is_backchannel(text):
     return bool(BACKCHANNEL.match(re.sub(r"[\s.,!?~…]", "", text)))
 
 
+# A short answer to a yes/no question. Said right after the question, it must not be lost as noise, as a
+# listener's backchannel, or as the avatar's own echo.
+SHORT_ANSWER = re.compile(r"^(네|예|응|어|좋아|좋아요|좋습니다|그래|그래요|그러죠|맞아|맞아요|오케이|알겠어요|알겠습니다|"
+                          r"해줘|해주세요|아니|아니요|아뇨|싫어|싫어요|됐어|됐어요)+$")
+# While the avatar waits for an answer, speech this short still counts (a spoken "네" lasts 0.15 to 0.3 s).
+SHORT_ANSWER_VOICED = 0.12
+
+
+def _bare(text):
+    return re.sub(r"[\s.,!?~…'\"]", "", text or "")
+
+
+# What Whisper writes for silence or faint noise in Korean (it learnt them from video subtitles). Heard with
+# little speech in the audio or low confidence, such a line is not the user talking. Checked against 18
+# recorded turns (2026-11-20): all 11 made-up "감사합니다." dropped, the one clearly spoken kept.
+HALLUCINATION = re.compile(r"^(감사합니다|고맙습니다|시청해주셔서감사합니다|구독과좋아요.*|좋아요와구독.*|"
+                           r"다음영상에서만나요|MBC뉴스.*|자막.*|thankyou|thanksforwatching)+$", re.I)
+_speech_vad = None
+
+
+def speech_seconds(audio, sample_rate=16000):
+    """Seconds of speech Silero finds in a whole utterance (float32 samples)."""
+    global _speech_vad
+    import torch
+    from silero_vad import get_speech_timestamps, load_silero_vad
+    if _speech_vad is None:
+        _speech_vad = load_silero_vad()
+    stamps = get_speech_timestamps(torch.from_numpy(np.asarray(audio, dtype=np.float32)), _speech_vad,
+                                   sampling_rate=sample_rate)
+    return sum(s["end"] - s["start"] for s in stamps) / sample_rate
+
+
+def is_hallucination(text, speech_s=None, avg_logprob=None):
+    if not HALLUCINATION.match(_bare(text)):
+        return False
+    return (speech_s is not None and speech_s < 0.5) or (avg_logprob is not None and avg_logprob < -0.4)
+
+
+def is_echo(text, agent_text):
+    """The microphone heard the end of the avatar's own words (speakers, no headphones), not the user."""
+    heard = _bare(text)
+    return len(heard) >= 2 and not SHORT_ANSWER.match(heard) and heard in _bare(agent_text)[-40:]
+
+
 # A sentence that reports or promises a lookup. Said in a reply that made no tool call, it is
 # either invented ("확인해 보니 주말엔 비가...") or an empty promise ("확인해 볼게요").
 LOOKUP_CLAIM = re.compile(
@@ -472,6 +516,7 @@ class Endpointer:
     def __init__(self, sample_rate):
         from silero_vad import load_silero_vad
         self.sample_rate = sample_rate
+        self.min_voiced = self.MIN_VOICED   # lowered by the session while it waits for a short answer
         self.vad = load_silero_vad()
         self.end_windows = int(self.END_SILENCE * sample_rate / self.WINDOW)
         self.pause_windows = int(self.PAUSE_SILENCE * sample_rate / self.WINDOW)
@@ -522,7 +567,7 @@ class Endpointer:
             if prob > 0.5:
                 self.voiced += 1
             self.silence = 0 if prob > 0.35 else self.silence + 1
-            long_enough = self.voiced * self.WINDOW / self.sample_rate >= self.MIN_VOICED
+            long_enough = self.voiced * self.WINDOW / self.sample_rate >= self.min_voiced
             if self.silence == 0 and self.paused:
                 self.paused = False
                 self.close_windows, self.probability = self.end_windows, None
@@ -572,8 +617,14 @@ class SpeechToText:
         segments, _ = self.model.transcribe(
             audio, language=language, beam_size=1, condition_on_previous_text=False
         )
+        segments = list(segments)
         # Whisper invents phrases for non-speech; its own no-speech score filters most of them.
-        return "".join(s.text for s in segments if s.no_speech_prob < 0.6).strip(), language
+        kept = [s for s in segments if s.no_speech_prob < 0.6]
+        weights = [max(len(s.text.strip()), 1) for s in kept]
+        # read by is_hallucination(): "감사합니다." with low confidence is Whisper's, not the user's
+        self.last_logprob = (sum(float(s.avg_logprob) * w for s, w in zip(kept, weights)) / sum(weights)
+                             if kept else None)
+        return "".join(s.text for s in kept).strip(), language
 
 
 class RemoteSpeechToText:
@@ -1536,6 +1587,22 @@ def create_app(args):
                 or (task and not task.done()) or loop.time() < listen["busy_until"]
             )
 
+        def only_tail():
+            """The avatar has nothing more to say: all that keeps it "busy" is the allowance for the browser
+            still playing the last chunk (up to about 1.7 s after the last audible word)."""
+            task = chat_state["task"]
+            return not (speech or synth_state["busy"] or not requests.empty() or (task and not task.done()))
+
+        def last_agent_text():
+            for message in reversed(history):
+                if message.get("role") == "assistant" and message.get("content"):
+                    return str(message["content"])
+            return ""
+
+        def expecting_answer():
+            """The avatar's last words were a question: a short "좋아" or "네" is now an answer."""
+            return last_agent_text().rstrip().endswith(("?", "？"))
+
         async def update_listen_state():
             if listen["transcribing"]:
                 state = "transcribing"
@@ -1559,8 +1626,9 @@ def create_app(args):
             """Prepares a reply to what has been said so far, in case the speaker is done."""
             started = time.perf_counter()
             text, heard_in = await loop.run_in_executor(stt_pool, recognizer().transcribe, audio, stt_language())
-            if len(text) < 2 or not SENTENCE_END.search(text):
-                # mid-sentence ("그러니까 내일..."): the speaker will go on, a reply now would be thrown away
+            if len(text) < 2 or not SENTENCE_END.search(text) or HALLUCINATION.match(_bare(text)):
+                # mid-sentence ("그러니까 내일..."): the speaker will go on, a reply now would be thrown away.
+                # "감사합니다." may be made up from noise: the whole utterance is checked in on_utterance instead.
                 spec["text"] = ""
                 return
             listen["turn"] += 1
@@ -1624,8 +1692,9 @@ def create_app(args):
             chat_state["task"] = task
             spec["task"] = None
 
-        async def on_utterance(audio, utterance_end, over_avatar=False):
-            """over_avatar: the utterance began while the avatar was talking and has not interrupted it yet."""
+        async def on_utterance(audio, utterance_end, over_avatar=False, in_tail=False):
+            """over_avatar: the utterance began while the avatar was talking and has not interrupted it yet.
+            in_tail: it began after the avatar's last words, while only the playback allowance was left."""
             listen["transcribing"] = True
             await update_listen_state()
             started = time.perf_counter()
@@ -1638,10 +1707,24 @@ def create_app(args):
                 text = ""
             finally:
                 listen["transcribing"] = False
-            if over_avatar and is_backchannel(text):
+            if text and HALLUCINATION.match(_bare(text)):
+                try:
+                    speech_s = await asyncio.to_thread(speech_seconds, audio)
+                except Exception:
+                    speech_s = None
+                if is_hallucination(text, speech_s, getattr(recognizer(), "last_logprob", None)):
+                    logger.info(f"Ignored a made-up transcript {text!r} (speech {speech_s} s)")
+                    await send_json({"type": "metric", "name": "hallucination_ignored", "text": text})
+                    await update_listen_state()
+                    return
+            answering = expecting_answer() and (only_tail() or not avatar_busy())
+            one_word_answer = answering and bool(SHORT_ANSWER.match(_bare(text)))
+            if in_tail and is_echo(text, last_agent_text()):
+                await send_json({"type": "metric", "name": "echo_ignored", "text": text})
+            elif over_avatar and is_backchannel(text) and not one_word_answer:
                 # the listener was only signalling attention: keep talking, say nothing about it
                 await send_json({"type": "metric", "name": "backchannel_ignored", "text": text})
-            elif len(text) >= 2:
+            elif len(text) >= 2 or one_word_answer:
                 if over_avatar and auto["active"] and avatar_busy():
                     await report_interrupt()
                 listen["turn"] += 1
@@ -1661,15 +1744,26 @@ def create_app(args):
         async def on_microphone(data):
             if stt is None or listen["transcribing"]:
                 return
-            if avatar_busy() and not settings["barge_in"]:
+            expecting = expecting_answer()
+            endpointer.min_voiced = SHORT_ANSWER_VOICED if expecting else Endpointer.MIN_VOICED
+            # After the avatar's last words the server still counts it busy for a while (the browser may still
+            # be playing). Wiping the microphone then threw away a quick "좋아" or "그래": listen in that tail,
+            # and drop only what turns out to be the avatar's own echo.
+            tail = avatar_busy() and only_tail()
+            if avatar_busy() and not settings["barge_in"] and not tail:
                 # Half-duplex: without headphones the microphone hears the avatar's own voice.
                 endpointer.reset()
             else:
                 gated = settings["interrupt_mode"] == "unmute_gate"
                 endpointer.judge = smart_turn.probability if smart_turn and settings["endpoint"] == "smart" else None
                 for kind, audio in endpointer.feed(np.frombuffer(data, dtype="<i2")):
+                    if kind == "start":
+                        listen["over_avatar"] = False
+                        listen["in_tail"] = tail
                     if kind == "start" and avatar_busy():
-                        if gated:
+                        if tail:
+                            pass   # the avatar has said everything: this is the user's turn, likely an answer
+                        elif gated:
                             listen["over_avatar"] = True  # wait and see whether this is a real interruption
                         else:
                             if auto["active"]:
@@ -1689,8 +1783,10 @@ def create_app(args):
                         if spec["task"] is not None:
                             asyncio.create_task(commit_speculation(audio, utterance_end))
                         else:
-                            asyncio.create_task(on_utterance(audio, utterance_end, listen["over_avatar"]))
+                            asyncio.create_task(on_utterance(audio, utterance_end, listen["over_avatar"],
+                                                             listen.get("in_tail", False)))
                         listen["over_avatar"] = False
+                        listen["in_tail"] = False
                 voiced = endpointer.voiced * Endpointer.WINDOW / engine.sample_rate
                 if listen["over_avatar"] and endpointer.in_speech and voiced >= BARGE_IN_SECONDS:
                     # too long for a backchannel: the user is taking the turn

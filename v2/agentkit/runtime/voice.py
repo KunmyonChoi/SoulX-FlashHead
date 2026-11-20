@@ -31,7 +31,8 @@ from .. import contracts
 from . import audio as audio_parts
 from . import client_features
 from ..tools.consent import read_consent
-from .audio import SAMPLE_RATE, SENTENCE_END, Endpointer, is_backchannel, split_for_tts, text_language
+from .audio import (HALLUCINATION, SAMPLE_RATE, SENTENCE_END, Endpointer, bare, is_backchannel, is_echo,
+                    is_hallucination, is_short_answer, speech_seconds, split_for_tts, text_language)
 
 logger = logging.getLogger("agentkit.voice")
 
@@ -667,8 +668,9 @@ class VoiceSession:
         engine_name = self.settings["stt"]
         heard = await self._transcribe(audio)
         text, heard_in = heard
-        if len(text) < 2 or not SENTENCE_END.search(text):
-            # mid-sentence ("그러니까 내일..."): the speaker will go on, a reply now would be thrown away
+        if len(text) < 2 or not SENTENCE_END.search(text) or HALLUCINATION.match(bare(text)):
+            # mid-sentence ("그러니까 내일..."): the speaker will go on, a reply now would be thrown away.
+            # "감사합니다." may be made up from noise: the whole utterance is checked in on_utterance instead.
             self.spec["text"] = ""
             return
         request = self._new_request(text, heard_in, (time.perf_counter() - started) * 1000, utterance_end, None,
@@ -767,8 +769,15 @@ class VoiceSession:
         await self.cancel_speech()
         self._start_reply(request)
 
-    async def on_utterance(self, audio, utterance_end, over_avatar=False, closed=None):
-        """over_avatar: the utterance began while the agent was talking and has not interrupted it yet."""
+    def last_agent_text(self):
+        for message in reversed(getattr(self.engine, "history", None) or []):
+            if message.get("role") == "assistant" and message.get("content"):
+                return str(message["content"])
+        return ""
+
+    async def on_utterance(self, audio, utterance_end, over_avatar=False, closed=None, in_tail=False):
+        """over_avatar: the utterance began while the agent was talking and has not interrupted it yet.
+        in_tail: it began after the agent's last words, while only the playback allowance was left."""
         closed = closed or {"silence": Endpointer.END_SILENCE, "probability": None}
         self.listen["transcribing"] = True
         await self.update_listen_state()
@@ -785,8 +794,24 @@ class VoiceSession:
         finally:
             self.listen["transcribing"] = False
         # a lone "네" or "예" is dropped as too short to trust, unless the agent is waiting for exactly that
-        one_word_answer = len(text) == 1 and self.expecting_answer() and read_consent(text) != "unclear"
-        if over_avatar and is_backchannel(text):
+        if text and HALLUCINATION.match(bare(text)):
+            # "감사합니다." heard in silence or faint noise: Whisper's subtitle habit, not the customer
+            try:
+                speech_s = await asyncio.to_thread(speech_seconds, audio, self.sample_rate)
+            except Exception:
+                speech_s = None
+            if is_hallucination(text, speech_s, getattr(heard, "avg_logprob", None)):
+                logger.info("Ignored a made-up transcript %r (speech %s s)", text, speech_s)
+                await self.send_json({"type": "metric", "name": "hallucination_ignored", "text": text,
+                                      "speech_s": speech_s})
+                await self.update_listen_state()
+                return
+        answering = self.expecting_answer() and (self.only_tail() or not self.avatar_busy())
+        one_word_answer = answering and (is_short_answer(text) or (len(text) == 1 and read_consent(text) != "unclear"))
+        if in_tail and is_echo(text, self.last_agent_text()):
+            # the microphone heard the agent's own last words
+            await self.send_json({"type": "metric", "name": "echo_ignored", "text": text})
+        elif over_avatar and is_backchannel(text) and not one_word_answer:
             # the listener was only signalling attention: keep talking, say nothing about it
             await self.send_json({"type": "metric", "name": "backchannel_ignored", "text": text})
         elif len(text) >= 2 or one_word_answer:
@@ -801,7 +826,11 @@ class VoiceSession:
             return
         loop = asyncio.get_running_loop()
         endpointer = self.endpointer
-        if self.avatar_busy() and not self.settings["barge_in"]:
+        # After the agent's last words it still counts as busy for a while (the browser may still be playing).
+        # Wiping the microphone then threw away a quick "좋아" or "그래": listen in that tail, and drop only
+        # what turns out to be the agent's own echo.
+        tail = self.avatar_busy() and self.only_tail()
+        if self.avatar_busy() and not self.settings["barge_in"] and not tail:
             # Half-duplex: without headphones the microphone hears the agent's own voice.
             endpointer.reset()
         else:
@@ -814,8 +843,11 @@ class VoiceSession:
                 if kind == "start":
                     # a start that never became an utterance (too short) must not leave its mark on the next one
                     self.listen["over_avatar"] = False
+                    self.listen["in_tail"] = tail
                 if kind == "start" and self.avatar_busy():
-                    if gated and expecting and self.only_tail():
+                    if tail and not self.settings["barge_in"]:
+                        self.listen["over_avatar"] = False   # half-duplex, the agent is done: the customer's turn
+                    elif gated and expecting and self.only_tail():
                         # the question has been asked in full; what starts now is the answer to it,
                         # even if it is only "네" and the last syllable is still playing
                         self.listen["over_avatar"] = False
@@ -838,8 +870,10 @@ class VoiceSession:
                     if self.spec["task"] is not None:
                         self._spawn(self.commit_speculation(audio, utterance_end, closed))
                     else:
-                        self._spawn(self.on_utterance(audio, utterance_end, self.listen["over_avatar"], closed))
+                        self._spawn(self.on_utterance(audio, utterance_end, self.listen["over_avatar"], closed,
+                                                      self.listen.get("in_tail", False)))
                     self.listen["over_avatar"] = False
+                    self.listen["in_tail"] = False
             voiced = endpointer.voiced * Endpointer.WINDOW / self.sample_rate
             if self.listen["over_avatar"] and endpointer.in_speech and voiced >= BARGE_IN_SECONDS:
                 # too long for a backchannel: the user is taking the turn
