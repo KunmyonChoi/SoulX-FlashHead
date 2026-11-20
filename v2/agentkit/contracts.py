@@ -175,6 +175,11 @@ class ClientAction(BaseModel):
     tool: str                       # e.g. "add_to_cart"
     description: str = ""           # for people: what touching does
     say: str = ""                   # how the touch reads in the transcript, "{field}" from the arguments
+    # For a write tool with a confirm_template (by default a touch cannot trigger it at all):
+    # propose: the touch makes the proposal (a plan, a mail to look at); it still runs only after consent.
+    # consent: the touch IS the consent (a "보내기" button under the whole mail on screen): it runs at once.
+    propose: bool = False
+    consent: bool = False
 
 
 class AgentDefinition(BaseModel):
@@ -239,7 +244,7 @@ class AdapterSpec(BaseModel):
 
 
 DisplayKind = Literal["menu", "items", "cart", "confirm", "receipt", "notice",
-                      "mail_list", "cleanup_report", "send_pending"]   # the last two: the office assistant screen (web/office.html)
+                      "mail_list", "cleanup_report", "send_pending", "mail", "calendar"]   # the last two: the office assistant screen (web/office.html)
 
 
 class DisplaySpec(BaseModel):
@@ -311,6 +316,7 @@ class ToolContext(BaseModel):
     simulated: bool = False                   # the customer is a simulated persona (a test run): never real accounts
     last_user_text: str = ""                  # the customer's latest utterance (consent is read from it)
     speculative: bool = False                 # the turn is not final yet: write tools must refuse
+    touch_consent: bool = False               # the call comes from a touch the definition marks as consent
 
 
 class ToolResult(BaseModel):

@@ -22,3 +22,6 @@ filler: 메일을 찾아볼게요.
 adapter:
   kind: python
   target: agentkit.tools.google:search_mail
+display:
+  kind: mail_list
+  path: listing

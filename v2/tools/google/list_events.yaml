@@ -27,3 +27,6 @@ filler: 일정을 확인해 볼게요.
 adapter:
   kind: python
   target: agentkit.tools.google:list_events
+display:
+  kind: calendar
+  path: calendar

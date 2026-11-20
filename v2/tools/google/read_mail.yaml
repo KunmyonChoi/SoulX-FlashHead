@@ -21,3 +21,6 @@ filler: 메일을 열어 볼게요.
 adapter:
   kind: python
   target: agentkit.tools.google:read_mail
+display:
+  kind: mail
+  path: mail

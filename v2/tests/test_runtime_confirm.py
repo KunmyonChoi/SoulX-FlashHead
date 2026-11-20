@@ -153,3 +153,12 @@ async def test_an_unclear_answer_then_a_repeat_of_the_tools_question_is_not_cut(
     assert any(e.type == "tool" and e.data.get("state") == "done" and e.data.get("error_type") == "not_confirmed" for e in events)
     assert not any(e.type == "replace" for e in events)
     assert events[-1].text.count(ASK) == 1                          # asked once, not appended a second time
+
+
+async def test_the_tools_confirmation_is_heard_even_if_the_model_words_it_differently():
+    llm = ScriptedLLM([[tool("verify_customer", order_id="A1001", phone_last4="1234"),
+                        tool("request_refund", order_id="A1001", reason="단순 변심")],
+                       [text("다른 상품을 환불해 드릴까요?")]])
+    engine = Engine(make_definition(), MiniShop(), FakeRecorder(), llm, now=fixed_now)
+    events = await collect(engine, "A1001 환불해 주세요. 뒤 네 자리 1234")
+    assert events[-1].text.endswith("무선 이어폰 30000원 환불을 접수할까요?")

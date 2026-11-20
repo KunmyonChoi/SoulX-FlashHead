@@ -313,7 +313,7 @@ class Engine:
             turn=state.number, language=language, test=self.test or self.simulated, simulated=self.simulated,
             # a notice is not the customer speaking: nothing in it can be read as consent
             last_user_text="" if getattr(state, "notice", False) else state.user_message["content"],
-            speculative=state.speculative)
+            speculative=state.speculative, touch_consent=bool(getattr(state, "touch_consent", False)))
         started = time.perf_counter()
         try:
             result = await self.gateway.call(context, self._tool_ids.get(name, name), arguments)
@@ -549,7 +549,7 @@ class Engine:
             async def tool_round(calls, note=None):
                 """Runs the calls in order: events, screens, handoff; then the exchange goes into the
                 history. note(result): text added to what the model is told about each result."""
-                nonlocal confirm_pending
+                nonlocal confirm_pending, still_open
                 round_results.clear()
                 exchange = [{"role": "assistant", "content": "",
                              "tool_calls": [{"function": dict(call)} for call in calls]}]
@@ -568,6 +568,10 @@ class Engine:
                         yield event
                     if result.needs_confirmation:
                         confirm_pending = True
+                        if result.confirmation_text:
+                            # the customer must hear the tool's own sentence: the model was seen saying "김민수
+                            # 님에게 보낼까요?" over a confirmation addressed to someone else (2026-11-20)
+                            still_open = result.confirmation_text
                     if call["name"] == HANDOFF_TOOL and result.ok and not result.needs_confirmation \
                             and not self.handed_off:
                         reason = str(call["arguments"].get("reason") or "")
@@ -629,10 +633,16 @@ class Engine:
                 def touch_note(result):
                     # the sentence may name things only the result knows ("{name}")
                     state.user_message["content"] = touch_sentence(action, arguments, turn_language, result.data)
+                    if result.needs_confirmation:
+                        return line("touch_proposed", turn_language)     # a plan or a mail to confirm, not done yet
                     return line("touch_done" if result.ok else "touch_failed", turn_language)
 
-                async for event in tool_round([{"name": action.tool, "arguments": arguments}], note=touch_note):
-                    yield event
+                state.touch_consent = bool(getattr(action, "consent", False))   # for this one call only
+                try:
+                    async for event in tool_round([{"name": action.tool, "arguments": arguments}], note=touch_note):
+                        yield event
+                finally:
+                    state.touch_consent = False
                 text = template_reply()
                 if text:
                     for event in speak_template(text, time.time()):
@@ -966,8 +976,10 @@ class Engine:
             contract = contracts.get(action.tool)
             if action.tool not in contracts:
                 error = f"action {name}: tool {action.tool} is not available to this agent"
-            elif contract is None or getattr(contract, "confirm_template", None):
-                # consent is given in words, to a sentence read aloud; a touch cannot stand in for it
+            elif contract is None or (getattr(contract, "confirm_template", None)
+                                      and not (getattr(action, "propose", False) or getattr(action, "consent", False))):
+                # consent is given in words, to a sentence read aloud; a touch stands in for it only where the
+                # definition says so (action.propose: the touch may only propose; action.consent: it is the consent)
                 error = f"action {name}: tool {action.tool} needs spoken consent and cannot be triggered by a touch"
         if error:
             logger.info(f"[{self.session_id}] touch refused: {error}")

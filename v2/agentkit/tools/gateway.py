@@ -416,6 +416,11 @@ class Gateway:
         if not contract.confirm_template:   # a write tool without a confirmation step runs at once
             return await self._execute(ctx, contract, adapter, arguments, state, key, info)
 
+        if getattr(ctx, "touch_consent", False):
+            # the customer pressed the button that sends / runs it, under what the screen showed: that is consent
+            state.proposals.pop(key, None)
+            info["consent"] = "touch"
+            return await self._execute(ctx, contract, adapter, arguments, state, key, info)
         proposal = state.proposals.get(key)
         if proposal is not None and not self._same_request(contract, proposal, arguments):
             proposal = None                 # what the customer was read no longer matches: ask again

@@ -1,0 +1,19 @@
+{
+  "agent_id": "office-assistant",
+  "version": 4,
+  "state": "tested",
+  "created_at": 1795166713.144097,
+  "created_by": "claude",
+  "based_on": 3,
+  "note": "업무 비서 v4: 화면(/office)과 연결. 시작하면 읽지 않은 메일을 화면에 띄움. 메일 목록·정리 계획·결과·되돌리기·보내기 취소, 터치 동작(보내기·이대로 정리·등록은 동의로)",
+  "safety_change": true,
+  "changed_fields": [
+    "tools",
+    "flow",
+    "opening",
+    "actions"
+  ],
+  "test_run_id": "office-assistant.v4.20261120-183245-4800",
+  "approved_by": null,
+  "approved_at": null
+}

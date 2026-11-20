@@ -31,3 +31,6 @@ filler: 빈 시간을 찾아볼게요.
 adapter:
   kind: python
   target: agentkit.tools.google:find_free_time
+display:
+  kind: calendar
+  path: calendar

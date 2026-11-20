@@ -202,3 +202,15 @@ async def test_send_goes_out_after_the_wait_and_cannot_be_cancelled_then(gateway
     assert len(fake.sent) == 1 and fake.sent[0]["subject"].startswith("Re: 내일 회의")
     late = await gateway.call(ctx(4, session=s), "google.cancel_send", {"send_id": "s1"})
     assert not late.executed and "이미 보냈습니다" in late.text
+
+
+async def test_mail_numbers_keep_their_meaning_when_the_list_changes(gateway):
+    s = "g10"
+    unread = await gateway.call(ctx(1, session=s), "google.list_mail", {"filter": "unread"})
+    kim = next(r["ref"] for r in unread.display[0]["data"]["rows"] if r["from"] == "김민수")
+    ads = await gateway.call(ctx(1, session=s), "google.list_mail", {"filter": "ads"})
+    assert kim not in [r["ref"] for r in ads.display[0]["data"]["rows"]]       # the ad list gets numbers of its own
+    ask = await gateway.call(ctx(2, session=s), "google.send_mail", {"reply_to": str(kim), "body": "잘 받았습니다."})
+    assert ask.confirmation_text.startswith("김민수에게")                          # still 김민수, not the first ad
+    again = await gateway.call(ctx(3, session=s), "google.list_mail", {"filter": "unread"})
+    assert next(r["ref"] for r in again.display[0]["data"]["rows"] if r["from"] == "김민수") == kim

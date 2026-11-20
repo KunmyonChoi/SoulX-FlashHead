@@ -49,3 +49,6 @@ adapter:
   target: agentkit.tools.google:create_event
   options:
     preview: agentkit.tools.google:preview_create_event
+display:
+  kind: calendar
+  path: calendar
