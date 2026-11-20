@@ -78,7 +78,7 @@ let detail = null;              // {meta, status, turns, spans}
 let definitionCache = {};       // "agent/version" -> AgentDefinition | null
 let turnCards = {};             // turn number -> {node, sig}
 let analysisState = { sid: null, result: null };
-let pollTimer = null, listTimer = null, detailTimer = null, liveSource = null;
+let pollTimer = null, liveSource = null;
 
 // ---- session list ------------------------------------------------------------------------------
 function normSession(raw) {
@@ -610,21 +610,50 @@ function saveCaseBlock(sid, criteria) {
 // ---- live updates ------------------------------------------------------------------------------
 function setLive(text, cls) { $('live-state').textContent = text; $('live-state').className = 'state ' + (cls || ''); }
 
+// Each live event used to fetch the session list and the whole open conversation again 0.4 s later. A long
+// conversation is a few hundred KB and a voice turn sends ten or more events, so a watched conversation was
+// fetched and re-rendered about every second, also in a hidden tab. Now: at most every LIST_GAP / DETAIL_GAP ms,
+// the last request always runs (nothing is missed), and a hidden tab only notes that something changed.
+const LIST_GAP = 3000, DETAIL_GAP = 2000;
+const refresh = {
+  list: { last: 0, timer: null, dirty: false },
+  detail: { last: 0, timer: null, dirty: false, analysis: false },
+};
+function throttled(slot, gap, run) {
+  if (document.hidden) { slot.dirty = true; return; }
+  if (slot.timer) return;   // one is already waiting; it will see the newest state when it runs
+  const wait = Math.max(400, slot.last + gap - Date.now());
+  slot.timer = setTimeout(async () => {
+    slot.timer = null; slot.last = Date.now();
+    try { await run(); } catch (err) { /* the next event or poll tries again */ }
+  }, wait);
+}
+function refreshList() { throttled(refresh.list, LIST_GAP, () => loadList(true)); }
+function refreshDetail(analysis) {
+  const sid = current;
+  if (analysis) refresh.detail.analysis = true;
+  throttled(refresh.detail, DETAIL_GAP, async () => {
+    if (current !== sid) return;
+    const wantAnalysis = refresh.detail.analysis;
+    refresh.detail.analysis = false;
+    await loadDetail(true);
+    if (wantAnalysis || (detail && detail.status !== 'active' && !analysisState.result)) loadAnalysis(sid);
+  });
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (refresh.list.dirty) { refresh.list.dirty = false; refreshList(); }
+  if (refresh.detail.dirty) { refresh.detail.dirty = false; refreshDetail(); }
+});
+
 function onLive(event) {
   let d = {};
   try { d = JSON.parse(event.data); } catch (err) { /* a bare line still means "something changed" */ }
   const inner = d.data || d.meta || d.turn || d.span || {};
   const sid = d.session_id || inner.session_id || (d.type === 'analysis' ? d.key : undefined);
   if (d.type === 'hello' || d.type === 'audio') return;
-  clearTimeout(listTimer);
-  listTimer = setTimeout(() => loadList(true), 400);
-  if (sid && sid === current) {
-    clearTimeout(detailTimer);
-    detailTimer = setTimeout(async () => {
-      await loadDetail(true);
-      if ((d.type || event.type) === 'analysis' || (detail && detail.status !== 'active' && !analysisState.result)) loadAnalysis(sid);
-    }, 400);
-  }
+  refreshList();
+  if (sid && sid === current) refreshDetail((d.type || event.type) === 'analysis');
 }
 
 function connectLive() {
@@ -642,7 +671,7 @@ function connectLive() {
 function startPolling() {
   setLive('실시간 알림 없음 · 10초마다 새로 고침', '');
   $('live-state').title = '서버에 실시간 알림(/api/live)이 없어 주기적으로 다시 받아 옵니다.';
-  setInterval(() => { loadList(true); if (current && detail && detail.status === 'active') loadDetail(true); }, 10000);
+  setInterval(() => { if (document.hidden) return; loadList(true); if (current && detail && detail.status === 'active') loadDetail(true); }, 10000);
 }
 
 // ---- trend -------------------------------------------------------------------------------------
