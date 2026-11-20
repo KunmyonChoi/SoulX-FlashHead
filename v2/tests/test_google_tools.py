@@ -236,3 +236,54 @@ def test_the_prompt_calendar_names_this_and_next_week():
     text = calendar_text(dt(2026, 11, 20, 17, 0, tzinfo=google.TZ))           # a Friday
     assert "11월 25일은 수요일(다음 주 수요일)" in text and "11월 29일은 일요일(다음 주 일요일)" in text
     assert "11월 20일은 금요일(오늘, 이번 주 금요일)" in text
+
+
+async def test_sending_an_edited_card_leaves_no_older_proposal_behind(gateway, monkeypatch):
+    monkeypatch.setattr(google, "SEND_DELAY", 0)
+    s = "g11"
+    await gateway.call(ctx(1, session=s), "google.list_mail", {"filter": "unread"})
+    asked = await gateway.call(ctx(2, session=s), "google.send_mail", {"reply_to": "1", "body": "잘 받았습니다."})
+    assert asked.needs_confirmation and len(gateway.pending(s)) == 1
+    touch = ToolContext(session_id=s, agent_id="office-assistant", version=2, turn=3, last_user_text="", simulated=True,
+                        test=True, touch_consent=True)
+    sent = await gateway.call(touch, "google.send_mail", {"reply_to": "1", "body": "잘 받았습니다. 금요일까지 드리겠습니다."})
+    assert sent.ok and not sent.needs_confirmation
+    assert gateway.pending(s) == []              # the unedited wording can no longer be sent by a later "응"
+
+
+async def test_a_failing_second_cleanup_group_leaves_the_first_undoable(gateway, monkeypatch):
+    s = "g12"
+    await gateway.call(ctx(1, session=s), "google.list_mail", {"filter": "all"})
+    fake = google.backend(ctx(1, session=s))
+    real_apply = fake.apply
+
+    async def apply(action, ids):
+        if action == "trash":
+            raise google.ToolFailure("upstream", "Gmail 오류")
+        return await real_apply(action, ids)
+    monkeypatch.setattr(fake, "apply", apply)
+    plan = {"spam": "4,5", "trash": "3"}
+    await gateway.call(ctx(2, session=s), "google.cleanup_mail", plan)
+    done = await gateway.call(ctx(3, said="응, 정리해", session=s), "google.cleanup_mail", plan)
+    assert done.ok and "하지 못했습니다" in done.text
+    undo = await gateway.call(ctx(4, said="되돌려 줘", session=s), "google.undo_cleanup", {})
+    assert undo.ok and "2통" in undo.text           # the two mails moved to spam come back
+
+
+async def test_disconnecting_stops_a_waiting_send_to_the_real_account(monkeypatch):
+    import asyncio
+    monkeypatch.setattr(google, "SEND_DELAY", 0.3)
+    sent = []
+
+    class Real(google.RealGoogle):
+        def __init__(self):
+            pass
+
+        async def send_draft(self, draft_id):
+            sent.append(draft_id)
+    real = Real()
+    result = await google._schedule(ctx(session="g13", simulated=False), real, {"id": "d1"}, "a@example.com", "제목")
+    assert result
+    assert google.cancel_real_sends() == 1
+    await asyncio.sleep(0.5)
+    assert sent == []

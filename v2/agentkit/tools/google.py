@@ -780,6 +780,21 @@ async def preview_send_mail(arguments, ctx):
 # Drafts and nothing written is lost. A restart inside the delay means that mail is not sent.
 SEND_DELAY = float(os.environ.get("AGENTKIT_SEND_DELAY", "10"))
 _sends = PerSession(dict)       # per conversation: send id -> {"task", "draft_id", "to", "subject", "state", "send_at"}
+_waiting_real = []              # sends to the real account still waiting, across conversations
+
+
+def cancel_real_sends():
+    """Stops every send to the real account that is still waiting. Called when the account is disconnected: the
+    waiting task kept the old backend and its access token, so the mail went out after "연결 끊기" (review
+    2026-11-20). Returns how many were stopped."""
+    stopped = 0
+    for item in list(_waiting_real):
+        if item["state"] == "waiting":
+            item["state"] = "cancelled"
+            item["task"].cancel()
+            stopped += 1
+    _waiting_real.clear()
+    return stopped
 
 
 def _pending_view(send_id, item):
@@ -809,6 +824,8 @@ async def _schedule(ctx, google, draft, to, subject):
     item = {"draft_id": draft["id"], "to": to, "subject": subject, "state": "waiting", "send_at": time.time() + SEND_DELAY}
     item["task"] = asyncio.get_running_loop().create_task(_send_later(google, item))
     sends[send_id] = item
+    if isinstance(google, RealGoogle):
+        _waiting_real[:] = [i for i in _waiting_real if i["state"] == "waiting"] + [item]
     seconds = int(round(SEND_DELAY))
     return ok(f"{_display(to)}에게 '{subject}' 메일을 {seconds}초 뒤에 보냅니다. 그 안에 사용자가 취소하라고 하면 cancel_send를 부르세요. "
               f"사용자에게는 보낸다고 말하고, {seconds}초 안에 취소할 수 있다고 짧게 덧붙이세요.",
@@ -977,14 +994,31 @@ def _report_view(report_id, report):
 async def cleanup_mail(arguments, ctx):
     groups = _plan(arguments, ctx)
     google = backend(ctx)
+    applied, failed = [], []
     for action, mails in groups:
-        await google.apply(action, [m["id"] for _, m in mails])
+        if failed:                    # after a failure, stop: the rest is reported as not done
+            failed.append((action, mails))
+            continue
+        try:
+            await google.apply(action, [m["id"] for _, m in mails])
+            applied.append((action, mails))
+        except Exception:
+            # what was already moved must stay undoable: without a report, a failing second group left the first
+            # group's mails moved, with nothing to undo them by (review 2026-11-20)
+            if not applied:
+                raise
+            failed.append((action, mails))
+    groups = applied
     reports = _reports.of(ctx)
     report_id = f"r{len(reports) + 1}"
     reports[report_id] = {"groups": [{"action": a, "items": [_row(int(k), m) for k, m in ms]} for a, ms in groups], "undone": set()}
     total = sum(len(ms) for _, ms in groups)
     lines = ", ".join(f"{DONE_WORDS[a]} {len(ms)}통" for a, ms in groups)
-    return ok(f"메일 {total}통을 정리했습니다: {lines}. 결과는 화면에 보여 줍니다. 되돌리라고 하면 undo_cleanup을 report_id \"{report_id}\"로 부르세요.",
+    missed = ""
+    if failed:
+        missed = (" 다만 " + ", ".join(f"{ACTIONS[a][0]} {len(ms)}통" for a, ms in failed)
+                  + "은 Gmail 오류로 하지 못했습니다. 이 사실을 꼭 알리세요.")
+    return ok(f"메일 {total}통을 정리했습니다: {lines}.{missed} 결과는 화면에 보여 줍니다. 되돌리라고 하면 undo_cleanup을 report_id \"{report_id}\"로 부르세요.",
               {"report": _report_view(report_id, reports[report_id])}, executed=True,
               repeatable=True)   # the same numbers on a later list are other mails: a new request, with its own consent
 

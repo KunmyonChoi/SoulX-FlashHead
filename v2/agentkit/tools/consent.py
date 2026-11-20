@@ -44,6 +44,27 @@ _OTHER_REQUEST = re.compile(
     r"(말|말씀|설명|얘기|이야기|확인|안내|조회|검색|연결|교환|변경|수정|반복|전달)\s?해\s?(주|줘|줄)\S*")
 
 
+# A different recipient or a change to what was proposed: "이서연한테 보내", "참조에 박지훈 추가해 줘",
+# "제목에 긴급 넣어". These are new requests, not consent to the proposal as it stands (review 2026-11-20: they were
+# read as "yes", and the unchanged mail would have gone to the original recipient).
+_CHANGE = re.compile(
+    r"(?<=[가-힣A-Za-z0-9])(?<!함)(한테|에게|께)(?![가-힣])|(?<=[가-힣A-Za-z0-9])께로|"
+    r"참조|숨은\s?참조|제목|본문|첨부|받는\s?사람|대신|바꿔|바꾸|고쳐|고치|빼고|빼\s?줘|빼\s?주|"
+    r"\b(cc|bcc|instead|change|subject)\b",
+    re.IGNORECASE)
+
+# Words that may stand around an action said as consent ("응 그냥 바로 보내").
+_FILLER = re.compile(r"(?<![가-힣])(그럼|그냥|바로|지금|이제|얼른|빨리|그대로|그렇게|어|음|자|일단|네네)(?![가-힣])")
+
+
+def _bare_action(text):
+    """The action verb alone, maybe with yes-words and fillers around it: "보내.", "응, 등록해", "그대로 보내 줘".
+    "박지훈 추가해 줘" names something to add and is a new request."""
+    rest = _AFFIRM_ACTION.sub(" ", text)
+    rest = _FILLER.sub(" ", _AFFIRM_WORD.sub(" ", rest))
+    return _AFFIRM_ACTION.search(text) is not None and not re.sub(r"[\s.,!~…]+", "", rest)
+
+
 def read_consent(text):
     """ "yes" | "no" | "unclear" """
     text = re.sub(r"\s+", " ", str(text or "")).strip()
@@ -53,7 +74,13 @@ def read_consent(text):
         return "no"
     if text.endswith(("?", "？")):       # "네?", "얼마라고요?": asking back is not agreeing
         return "unclear"
-    if _AFFIRM_WORD.search(text) or _AFFIRM_ACTION.search(text) or _AFFIRM_PHRASE.search(_OTHER_REQUEST.sub(" ", text)):
+    if _CHANGE.search(text):
+        return "unclear"
+    if _bare_action(text):
+        return "yes"
+    if _AFFIRM_ACTION.search(text):           # an action with more said around it: a new request
+        return "unclear"
+    if _AFFIRM_WORD.search(text) or _AFFIRM_PHRASE.search(_OTHER_REQUEST.sub(" ", text)):
         return "yes"
     return "unclear"
 

@@ -160,6 +160,12 @@ async def callback(state: str = "", code: str = "", error: str = ""):
 
 @router.post("/api/connect/google/disconnect")
 async def disconnect():
+    stopped = 0
+    try:
+        from .tools import google as google_tools
+        stopped = google_tools.cancel_real_sends()      # before the token goes: a waiting mail must not go out after
+    except Exception:
+        pass
     store = get_store()
     saved = store.get("google")
     revoked = False
@@ -175,7 +181,7 @@ async def disconnect():
         google_tools._real["backend"] = None
     except Exception:
         pass
-    return {"ok": True, "revoked": revoked, **_status()}
+    return {"ok": True, "revoked": revoked, "stopped_sends": stopped, **_status()}
 
 
 def main(argv=None):

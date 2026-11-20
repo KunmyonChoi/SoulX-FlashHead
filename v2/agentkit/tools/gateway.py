@@ -418,7 +418,10 @@ class Gateway:
 
         if getattr(ctx, "touch_consent", False):
             # the customer pressed the button that sends / runs it, under what the screen showed: that is consent
-            state.proposals.pop(key, None)
+            # every open proposal of this tool goes: the card may have been edited, and the older wording must not
+            # be sent too by a later "응" (review 2026-11-20)
+            for old in [k for k in state.proposals if k[0] == contract.id]:
+                state.proposals.pop(old, None)
             info["consent"] = "touch"
             return await self._execute(ctx, contract, adapter, arguments, state, key, info)
         proposal = state.proposals.get(key)

@@ -72,3 +72,13 @@ def test_keep_content_for_one_conversation_overrides_the_agent_setting():
     default = FakeRecorder(); Engine(definition, FakeGateway([]), default, ScriptedLLM(), now=fixed_now)
     assert kept.sessions[0].store_content is True and kept.sessions[0].settings["keep_content"] is True
     assert default.sessions[0].store_content is False
+
+
+def test_a_private_session_stays_private_after_many_other_sessions(tmp_path):
+    rec = recorder(tmp_path)
+    rec.start_session(SessionMeta(session_id="p", agent_id="office", version=4, channel="text", started_at=1.0, store_content=False))
+    for i in range(5002):             # the old map was cleared after 5000 sessions
+        rec.start_session(SessionMeta(session_id=f"o{i}", agent_id="shop", version=1, channel="text", started_at=1.0))
+    rec.turn(TurnRecord(session_id="p", turn=1, user_text="김민수 메일 읽어 줘", agent_text="계약서", t_user_end=1.0))
+    turn = next(i[1] for i in rec._queue.queue if i[0] == "turn")
+    assert turn["user_text"].startswith("(내용 저장 안 함")

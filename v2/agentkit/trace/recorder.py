@@ -22,6 +22,7 @@ log = logging.getLogger("agentkit.trace")
 
 MAX_QUEUE = 20000                 # items
 MAX_AUDIO_BYTES = 64 * 1024 * 1024  # audio waiting in the queue
+MAX_PRIVATE = 100_000              # private sessions remembered (a few MB at most), oldest dropped first
 BATCH = 200
 LIVE_PAYLOAD_LIMIT = 4000         # characters of span input/output sent to live subscribers
 PURGE_EVERY_S = 6 * 3600.0
@@ -61,7 +62,10 @@ class TraceRecorder:
         self._idle = threading.Condition()
         self._pending = 0                 # items queued or being written
         self._audio_ok: dict[str, bool] = {}     # session -> may store audio (as far as this process knows)
-        self._content_ok: dict[str, bool] = {}   # session -> may store what was said and looked up
+        # sessions whose content must not be stored. Kept apart from the audio map and never cleared in one go:
+        # clearing it after 5000 sessions made live private conversations store everything (review 2026-11-20).
+        # Entries stay after the end, so a late record of an ended session is still stripped; the oldest go first.
+        self._private: dict[str, None] = {}
         self._audio_bytes = 0
         self._last_warning = 0.0
         self._next_purge = time.time() + 30.0
@@ -76,9 +80,10 @@ class TraceRecorder:
             if len(self._audio_ok) > 5000:       # sessions that were never ended
                 self._audio_ok.clear()
             content = data.get("store_content", True) is not False
-            if len(self._content_ok) > 5000:
-                self._content_ok.clear()
-            self._content_ok[data["session_id"]] = content
+            if not content:
+                self._private[data["session_id"]] = None
+                while len(self._private) > MAX_PRIVATE:
+                    self._private.pop(next(iter(self._private)))
             self._audio_ok[data["session_id"]] = content and bool(data.get("test") or data.get("simulated"))
             self._put(("session", data))
         except Exception as exc:
@@ -89,7 +94,7 @@ class TraceRecorder:
             # model_dump copies the containers, so later changes by the caller (a message list
             # that keeps growing) do not reach the stored record
             data = span.model_dump()
-            if self._content_ok.get(data["session_id"]) is False:
+            if data["session_id"] in self._private:
                 data = without_content(data)
             self._put(("span", data, list(pii_paths) if pii_paths else None))
         except Exception as exc:
@@ -98,7 +103,7 @@ class TraceRecorder:
     def turn(self, turn: TurnRecord) -> None:
         try:
             data = turn.model_dump()
-            if self._content_ok.get(data["session_id"]) is False:
+            if data["session_id"] in self._private:
                 for key in ("user_text", "agent_text"):
                     data[key] = f"(내용 저장 안 함 · {len(data.get(key) or '')}자)" if data.get(key) else ""
             self._put(("turn", data))
@@ -107,7 +112,7 @@ class TraceRecorder:
 
     def audio(self, session_id: str, turn: int, role: Literal["user", "agent"], pcm16: bytes) -> None:
         try:
-            if self._audio_ok.get(session_id) is False or not pcm16:
+            if self._audio_ok.get(session_id) is False or session_id in self._private or not pcm16:
                 return                    # a production session: the audio is not even queued
             data = bytes(pcm16)
             if self._audio_bytes + len(data) > MAX_AUDIO_BYTES:
@@ -348,7 +353,7 @@ class TraceRecorder:
                 continue
             _, sid, turn, role, pcm = m
             try:
-                allowed = self._audio_ok.get(sid)
+                allowed = False if sid in self._private else self._audio_ok.get(sid)
                 if allowed is None:
                     flags = store.session_flags(sid)
                     allowed = bool(flags and (flags[0] or flags[1]))
