@@ -47,6 +47,10 @@ class NullRecorder:
     def end_session(self, session_id, status): pass
 
 
+# A pass after a system note that answers the note instead of the customer.
+META_REPLY = re.compile(r"지시하신\s?대로|안내하신\s?대로|말씀하신\s?대로\s?도구|시스템\s?안내|도구를\s?호출|확인\s?문장을|"
+                        r"^\s*(네[,.!]?\s*)?(알겠습니다|알겠어요|명심하겠|주의하겠|유의하겠)[.,!]?\s*(앞으로|다음부터|지시|말씀하신)")
+META_HOLD = 40      # characters of such a pass held back before any is spoken
 CARRY_S = 20.0     # a cut-off turn's words are put in front of the next one said within this many seconds
 
 
@@ -701,6 +705,7 @@ class Engine:
                 tools = specs if specs and tool_rounds < MAX_TOOL_ROUNDS and not confirm_pending \
                     and not self.handed_off and not touched else None
                 messages = self._messages(system, state, clock, reference, question, note) + nudge
+                nudged = bool(nudge)      # this pass follows a system note: it may answer the note instead
                 calls = []
                 pass_text = ""
                 first_token_ms = None
@@ -779,7 +784,22 @@ class Engine:
                                 yield ReplyEvent(type="piece", text=spoken)
                             calls = []
                             break
+                        if nudged and META_REPLY.search(pass_text):
+                            # The model answered the system note, not the customer: "네, 알겠습니다. 앞으로는 지시하신
+                            # 대로 도구를 호출하고 ..." (2026-11-20; seen since the first office tests). What it said
+                            # before the note stays; these words go.
+                            reply["content"] = reply["content"][:len(reply["content"]) - len(pass_text)].rstrip()
+                            buffer = ""
+                            self._span(state, "guard", time.time(), name="builtin_no_meta_reply",
+                                       input={"sentence": pass_text[:200]}, attrs={"guard_id": "builtin_no_meta_reply", "action": "dropped"})
+                            logger.info(f"[{self.session_id}] guard builtin_no_meta_reply (dropped)")
+                            yield ReplyEvent(type="replace", text=reply["content"],
+                                             data={"guard_id": "builtin_no_meta_reply", "action": "dropped"})
+                            calls = []
+                            break
                         yield ReplyEvent(type="delta", text=value)
+                        if nudged and len(pass_text) < META_HOLD:
+                            continue      # not spoken yet: the first words show whether it answers the note
                         while True:
                             piece, buffer = take_piece(buffer, PIECE_CHARS if answer_started else FIRST_PIECE_CHARS)
                             if not piece:

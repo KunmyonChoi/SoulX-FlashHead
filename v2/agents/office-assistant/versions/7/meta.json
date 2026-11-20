@@ -1,0 +1,16 @@
+{
+  "agent_id": "office-assistant",
+  "version": 7,
+  "state": "tested",
+  "created_at": 1795182940.9453669,
+  "created_by": "claude",
+  "based_on": 6,
+  "note": "제안은 확인 질문 검사에서 뺌",
+  "safety_change": true,
+  "changed_fields": [
+    "guards"
+  ],
+  "test_run_id": "office-assistant.v7.20261120-225603-3b6f",
+  "approved_by": null,
+  "approved_at": null
+}

@@ -317,3 +317,14 @@ async def test_address_lookup_runs_in_parallel_and_is_kept_for_the_consented_cal
     assert await real.find_email("김민수") == ["minsu@example.com"]
     assert len(calls) == 11 and 1 < most[0] <= 5
     assert await real.find_email("김민수") == ["minsu@example.com"] and len(calls) == 11    # no second round
+
+
+def test_spoken_dates_are_worked_out_in_code():
+    friday = date(2026, 11, 20)
+    cases = {"다음 주 수요일": date(2026, 11, 25), "다음주수요일": date(2026, 11, 25), "이번 주 일요일": date(2026, 11, 22),
+             "수요일": date(2026, 11, 25), "내일": date(2026, 11, 21), "모레": date(2026, 11, 22), "11월 25일": date(2026, 11, 25),
+             "25일": date(2026, 11, 25), "3일": date(2026, 12, 3), "3일 뒤": date(2026, 11, 23), "다음 주": date(2026, 11, 23),
+             "다다음 주 화요일": date(2026, 12, 1), "2026-12-01": date(2026, 12, 1)}
+    for words, day in cases.items():
+        assert google.day_from_words(words, friday) == day, words
+    assert google.day_from_words("크리스마스", friday) is None

@@ -1,0 +1,18 @@
+{
+  "agent_id": "office-assistant",
+  "version": 6,
+  "state": "tested",
+  "created_at": 1795182049.0727222,
+  "created_by": "claude",
+  "based_on": 5,
+  "note": "받은 메일 설명의 '보냈어요'는 거짓 완료로 보지 않음",
+  "safety_change": true,
+  "changed_fields": [
+    "flow",
+    "guards",
+    "tests.personas"
+  ],
+  "test_run_id": "office-assistant.v6.20261120-224437-bd73",
+  "approved_by": null,
+  "approved_at": null
+}

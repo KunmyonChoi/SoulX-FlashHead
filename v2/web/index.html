@@ -6,6 +6,23 @@
 <title>대화 · 음성 에이전트</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="/web/app.css?v=screen7e">
+<style>
+/* the office assistant's screens, drawn in the conversation (Office below) */
+.office { align-self: stretch; max-width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.office h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.office table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13.5px; }
+.office td { padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: top; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office td.n { width: 2.2em; color: var(--muted); }
+.office td.who { width: 30%; }
+.office td.at { width: 5.5em; text-align: right; color: var(--muted); font-size: 12.5px; }
+.office tr.unread td.who, .office tr.unread td.what { font-weight: 600; }
+.office tr[data-ref] { cursor: pointer; }
+.office tr[data-ref]:hover td { background: var(--panel); }
+.office .tag { font-size: 11px; border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; margin-right: 4px; font-weight: 500; }
+.office .tag.risk { color: #f08a7e; border-color: #f08a7e; }
+.office .body { white-space: pre-wrap; font-size: 13.5px; max-height: 16em; overflow: auto; margin-top: 6px; }
+.office .stale { opacity: .55; }
+</style>
 </head>
 <body class="page-talk">
 <header class="bar">
@@ -432,7 +449,65 @@ function argsText(args) {
 // Everything here is drawn from `display` payloads, which carry the system's own values. What the agent says
 // never changes it. Open only for agents whose `ready.screen.panels` is not empty.
 // the screens this page draws (Screen.show): the server tells the agent when a result is not shown here
-const SCREEN_KINDS = 'menu,items,cart,confirm,receipt,notice';
+// (the office assistant's screens are drawn in the conversation itself, as cards: Office below)
+const OFFICE_KINDS = ['mail_list', 'mail', 'calendar', 'cleanup_report', 'send_pending'];
+// what this page will draw for the agent being started: confirm and receipt cards need the menu area (Screen.cards)
+function screenKinds() {
+  const panels = (definition && definition.screen && definition.screen.panels) || [];
+  const kinds = ['notice', ...OFFICE_KINDS];
+  if (panels.includes('menu')) kinds.push('menu', 'items', 'confirm', 'receipt');
+  if (panels.includes('cart')) kinds.push('cart');
+  return kinds.join(',');
+}
+
+// Mail lists, a mail, a day's events, a cleanup report and a waiting send, as cards in the conversation. The
+// assistant had fetched lists on this page that nobody could see; asked to show them, it only talked (2026-11-20).
+const Office = {
+  hhmm(iso) { const d = new Date(iso); return d.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }); },
+  when(iso) { const d = new Date(iso), now = new Date();
+    return d.toDateString() === now.toDateString() ? this.hhmm(iso) : (d.getMonth() + 1) + '월 ' + d.getDate() + '일'; },
+  card(kind, title, ...body) {
+    // only the newest card of a kind stays bright: older ones are what was on screen before
+    document.querySelectorAll('#chat-log .office[data-kind="' + kind + '"]').forEach(n => n.classList.add('stale'));
+    const node = el('div', { class: 'office', 'data-kind': kind }, el('h4', {}, title), ...body);
+    appendChat(node, this.replyId);       // above the reply that is being written about it
+  },
+  show(kind, d) {
+    if (kind === 'mail_list') {
+      const rows = d.rows || [], names = { unread: '읽지 않은 메일', reply: '답장 필요', ads: '광고·알림', all: '받은편지함', search: '찾은 메일' };
+      const total = d.total != null ? d.total : rows.length;
+      const title = (names[d.filter] || '메일') + (d.query ? ' · ' + d.query : '') + ' · ' + total + '통'
+        + (rows.length && total > rows.length ? ' 중 ' + rows.length + '통' : '');
+      if (!rows.length) { this.card(kind, title, el('div', { class: 'muted' }, '메일이 없습니다.')); return; }
+      this.card(kind, title, el('table', {}, el('tbody', {}, rows.map(r => el('tr', {
+        class: r.unread ? 'unread' : '', 'data-ref': Screen.can('open_mail') ? r.ref : null,
+        title: Screen.can('open_mail') ? '눌러서 열기' : null,
+        onclick: Screen.can('open_mail') ? () => sendAction('open_mail', { ref: String(r.ref) }, r.ref + '번 메일') : null },
+        el('td', { class: 'n' }, String(r.ref)), el('td', { class: 'who' }, r.from || r.address || ''),
+        el('td', { class: 'what' }, ...(r.marks || []).filter(k => k === 'risk' || k === 'reply')
+          .map(k => el('span', { class: 'tag ' + k }, k === 'risk' ? '의심' : '답장')), r.subject || '(제목 없음)'),
+        el('td', { class: 'at' }, r.at ? this.when(r.at) : ''))))));
+    } else if (kind === 'mail') {
+      this.card(kind, (d.from || '') + ' · ' + (d.at ? this.when(d.at) : ''), el('div', { style: 'font-weight:600' }, d.subject || '(제목 없음)'),
+        el('div', { class: 'body' }, String(d.body || '').slice(0, 3000)),
+        (d.attachments || []).length ? el('div', { class: 'muted' }, '첨부: ' + d.attachments.join(', ')) : null);
+    } else if (kind === 'calendar') {
+      const events = d.events || [], free = d.free || [];
+      const lines = events.map(e => el('tr', {}, el('td', { class: 'at', style: 'text-align:left;width:7.5em' },
+        e.all_day ? '종일' : this.hhmm(e.start) + '–' + this.hhmm(e.end)), el('td', {}, e.title)));
+      this.card(kind, (d.label || d.date || '일정') + (d.days > 1 ? '부터 ' + d.days + '일' : '') + ' · ' + events.length + '건',
+        events.length ? el('table', {}, el('tbody', {}, lines)) : el('div', { class: 'muted' }, '일정이 없습니다.'),
+        free.length ? el('div', { class: 'muted', style: 'margin-top:6px' }, '빈 시간: ' + free.map(f => this.hhmm(f.start) + '–' + this.hhmm(f.end)).join(', ')) : null);
+    } else if (kind === 'cleanup_report') {
+      const groups = d.groups || [];
+      this.card(kind, '정리 결과 · ' + (d.done || 0) + '통' + (d.undone ? ', 되돌림 ' + d.undone + '통' : ''),
+        ...groups.map(g => el('div', {}, el('b', {}, g.label + ' '), (g.items || []).map(i => (i.undone ? '(되돌림) ' : '') + (i.subject || '')).join(' · '))));
+    } else if (kind === 'send_pending') {
+      const words = { waiting: '보내는 중', sent: '보냈어요', cancelled: '보내지 않았어요', failed: '보내지 못했어요', sending: '보내는 중' };
+      this.card(kind, '메일 보내기', el('div', {}, (words[d.state] || d.state || '') + ': ' + (d.to || '') + ' · ' + (d.subject || '')));
+    }
+  },
+};
 const Screen = {
   on: false,            // this agent has a screen
   cards: false,         // confirm and receipt cards have a place (the menu area)
@@ -484,6 +559,7 @@ const Screen = {
   show(m) {
     const data = m.data || {}, words = displayText(m.kind, data);
     Flow.log('step', '화면에 표시 (' + (DISPLAY_LABEL[m.kind] || m.kind) + '): ' + words.summary, words.lines.join('\n') || null);
+    if (OFFICE_KINDS.includes(m.kind)) { Office.replyId = m.id; Office.show(m.kind, data); return; }
     if (!this.on) return;
     if (m.kind === 'menu') { this.menu = data; this.drawMenu(); }
     else if (m.kind === 'items') {
@@ -1159,7 +1235,7 @@ async function start() {
     const keep = !$('keep-label').hidden && $('keep-content').checked;
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'
       + qs({ agent: $('agent').value, channel, version: $('version').value, test: test ? 1 : 0, keep_content: keep ? 1 : undefined,
-             screen: SCREEN_KINDS }));
+             screen: screenKinds() }));
     ws.binaryType = 'arraybuffer';
     ws.onmessage = e => { chain = chain.then(() => onMessage(e.data)).catch(err => console.error(err)); };
     ws.onclose = (event) => {

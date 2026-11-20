@@ -60,14 +60,65 @@ def spoken_time(moment: datetime) -> str:
     return f"{half} {h12}시" + (f" {m}분" if m else "")
 
 
+_WEEKS = {"지지난": -2, "저저번": -2, "지난": -1, "저번": -1, "이번": 0, "금": 0, "다음": 1, "담": 1, "다다음": 2}
+_RELATIVE = {"그제": -2, "그저께": -2, "어제": -1, "오늘": 0, "금일": 0, "내일": 1, "낼": 1, "모레": 2, "글피": 3}
+
+
+def day_from_words(text, today):
+    """The day a Korean date expression means: "다음 주 수요일", "내일", "11월 25일", "25일", "3일 뒤", "수요일".
+    Worked out here, not by the model: given a calendar that said "11월 25일은 수요일(다음 주 수요일)", it still
+    called list_events with 11월 26일 three times out of three (2026-11-20). None if not understood."""
+    t = re.sub(r"\s+", "", str(text or ""))
+    if not t:
+        return None
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", t[:10]) if re.match(r"\d{4}-", t) else None
+    if m:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    for word, shift in sorted(_RELATIVE.items(), key=lambda kv: -len(kv[0])):
+        if t.startswith(word):
+            return today + timedelta(days=shift)
+    m = re.fullmatch(r"(\d{1,3})일(뒤|후|있다가)", t)
+    if m:
+        return today + timedelta(days=int(m.group(1)))
+    m = re.fullmatch(r"(?:(\d{1,2})월)?(\d{1,2})일(?:날)?", t)
+    if m:
+        month, day = int(m.group(1) or today.month), int(m.group(2))
+        year = today.year
+        try:
+            found = date(year, month, day)
+        except ValueError:
+            return None
+        if found < today - timedelta(days=60) or (not m.group(1) and found < today):   # "25일" said on the 28th: next month
+            nm = month + 1 if not m.group(1) else month
+            year, month = (year + (nm - 1) // 12, (nm - 1) % 12 + 1) if not m.group(1) else (year + 1, month)
+            try:
+                found = date(year, month, day)
+            except ValueError:
+                return None
+        return found
+    m = re.fullmatch(r"(지지난|저저번|다다음|지난|저번|이번|금|다음|담)?주?([월화수목금토일])(?:요일)?(?:날)?", t)
+    if m:
+        target = WEEKDAYS.index(m.group(2))
+        if m.group(1) is None:                 # "수요일": the next one (today if it is today)
+            return today + timedelta(days=(target - today.weekday()) % 7)
+        monday = today - timedelta(days=today.weekday())
+        return monday + timedelta(days=7 * _WEEKS[m.group(1)] + target)
+    m = re.fullmatch(r"(지지난|저저번|다다음|지난|저번|이번|금|다음|담)주", t)
+    if m:                                       # a week: its Monday (or today, for this week)
+        monday = today - timedelta(days=today.weekday()) + timedelta(days=7 * _WEEKS[m.group(1)])
+        return max(monday, today) if _WEEKS[m.group(1)] == 0 else monday
+    return None
+
+
 def _parse_day(value) -> date:
     text = str(value or "").strip()
     if not text:
         return _now().date()
-    try:
-        return datetime.strptime(text[:10], "%Y-%m-%d").date()
-    except ValueError:
-        raise ToolFailure("invalid_input", f"날짜 '{text}'를 이해하지 못했습니다. 2026-11-21 형식으로 다시 호출하세요.")
+    found = day_from_words(text, _now().date())
+    if found is None:
+        raise ToolFailure("invalid_input", f"날짜 '{text}'를 이해하지 못했습니다. 사용자가 말한 그대로('다음 주 수요일', '내일', "
+                                           f"'11월 25일') 또는 2026-11-21 형식으로 다시 호출하세요.")
+    return found
 
 
 def _parse_time(value, field="start") -> tuple[int, int]:

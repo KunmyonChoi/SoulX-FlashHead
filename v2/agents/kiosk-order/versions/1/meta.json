@@ -8,7 +8,7 @@
   "note": "카페 키오스크 주문 완성본 (docs/DISPLAY.md S12): 도구 8개, 여는 말, 화면(메뉴·주문 내역), 터치 동작, 가상 고객 9명, 사례 3개. 아직 시험·배포 전",
   "safety_change": false,
   "changed_fields": [],
-  "test_run_id": "kiosk-order.v1.20261120-220226-1380",
+  "test_run_id": "kiosk-order.v1.20261120-230040-8e88",
   "approved_by": null,
   "approved_at": null
 }

@@ -64,3 +64,18 @@ def test_plain_explanations_and_lists_are_not_loops():
                  "오전 9시, 오전 10시, 오전 11시, 오후 1시, 오후 2시가 비어 있어요.",
                  "환불이 아니라 교환을 원하시는 거죠? 교환이 아니라 반품이면 말씀해 주세요."]:
         assert loop_start(said) is None, said
+
+
+# ---- a pass after a guard's note that answers the note is dropped ---------------------------------
+
+async def test_a_regenerated_reply_that_answers_the_system_note_is_dropped():
+    from agentkit.contracts import Guard
+    definition = make_definition(guards=[Guard(id="offer", kind="regex", pattern="잡아 드릴까요", unless_tools=[],
+                                                nudge="(시스템 안내: 확인은 도구가 합니다.)")])
+    llm = ScriptedLLM([[text("금요일 오후가 비어 있어요. 일정을 잡아 드릴까요?")],
+                       [text("네, 알겠습니다. 앞으로는 지시하신 대로 도구를 호출하겠습니다. 무엇을 도와드릴까요?")]])
+    engine = Engine(definition, FakeGateway(SHOP_CONTRACTS), FakeRecorder(), llm, now=fixed_now)
+    events = await collect(engine, "금요일 오후 비어?")
+    spoken = " ".join(e.text for e in events if e.type == "piece")
+    assert "지시하신" not in spoken and "알겠습니다" not in spoken
+    assert engine.history[-1]["content"] == "금요일 오후가 비어 있어요."

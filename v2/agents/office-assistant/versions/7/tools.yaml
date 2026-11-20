@@ -1,0 +1,17 @@
+tool_packs:
+- google
+- common
+tools:
+- list_mail
+- search_mail
+- read_mail
+- cleanup_mail
+- undo_cleanup
+- send_mail
+- cancel_send
+- create_draft
+- send_draft
+- list_events
+- find_free_time
+- create_event
+- calculate

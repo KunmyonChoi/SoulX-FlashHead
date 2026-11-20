@@ -11,7 +11,8 @@ input_schema:
       description: '일정 제목. 예: 예산 회의'
     date:
       type: string
-      description: 날짜 YYYY-MM-DD
+      description: '사용자가 말한 날짜 표현을 그대로 적는다. 예: ''다음 주 수요일'', ''내일'', ''모레'', ''11월 25일'', ''25일'', ''3일 뒤''. 직접 날짜를 계산해 바꾸지
+        않는다(서버가 계산한다). 이미 정해진 날짜면 YYYY-MM-DD도 된다'
     start:
       type: string
       description: '시작 시각 HH:MM(24시간). 예: 15:00'

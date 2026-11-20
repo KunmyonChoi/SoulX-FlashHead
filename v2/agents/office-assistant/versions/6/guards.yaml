@@ -1,0 +1,27 @@
+guards:
+- id: no_fake_done
+  kind: claims_lookup
+  pattern: (등록(했|됐|되었|해\s?드렸|을\s?완료)|전송(했|됐|되었)|발송(했|됐|되었)|(옮겼|옮겨\s?드렸|이동했|이동시켰|삭제했|지웠|보관했|정리했|되돌렸|읽음으로\s?표시했)(어요|습니다|다))|^(?!.*(님이|님께서|님은|에서|측이|측에서|팀이|팀에서|회사가|으로부터|로부터)[^.?!]*보냈).*보냈(어요|습니다)
+  unless_tools:
+  - create_event
+  - send_mail
+  - send_draft
+  - cleanup_mail
+  - undo_cleanup
+  nudge: '(시스템 안내: 실행되지 않았는데 등록했거나 보냈거나 정리했다고 말하려 했습니다. 사용자가 동의했다면 지금 도구를 부르고(정리는 cleanup_mail), 아니라면
+    처리되었다는 말을 하지 마세요.)'
+- id: confirm_through_tool
+  kind: claims_lookup
+  pattern: (보낼까요|보내\s?드릴까요|등록할까요|등록해\s?드릴까요|잡아\s?드릴까요|이대로\s?(보낼|등록|할)까요|옮길까요|옮겨\s?드릴까요|이동할까요|삭제할까요|지울까요|보관할까요|정리할까요|정리해\s?드릴까요)
+  unless_tools:
+  - create_event
+  - send_mail
+  - send_draft
+  - cleanup_mail
+  nudge: '(시스템 안내: 실행 전 확인을 직접 물으려 했습니다. 확인 문장은 도구가 만듭니다. 일정이면 create_event를, 메일이면 send_mail을, 메일 정리(보관,
+    스팸, 휴지통, 읽음 표시)면 cleanup_mail을 지금 부르고 받은 확인 문장을 그대로 읽으세요.)'
+- id: no_spoken_password
+  kind: regex
+  pattern: (비밀\s?번호|인증\s?번호)\S{0,2}\s?(알려|말씀|불러)
+  unless_tools: []
+  nudge: '(시스템 안내: 비밀번호나 인증 번호를 말로 묻지 마세요.)'
