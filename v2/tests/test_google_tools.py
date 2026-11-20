@@ -88,3 +88,85 @@ async def test_real_backend_request_shapes(tmp_path, monkeypatch):
     raw = json.loads(calls[-1].content)["message"]["raw"]
     assert made["id"] == "D1" and "a@b.c" in base64.urlsafe_b64decode(raw).decode()
     assert len([c for c in calls if c.url.host == "oauth2.googleapis.com"]) == 1   # the access token is reused
+
+
+async def test_list_mail_filters_counts_and_marks(gateway):
+    listed = await gateway.call(ctx(1, session="g5"), "google.list_mail", {"filter": "unread"})
+    data = listed.display[0]["data"]
+    assert listed.display[0]["kind"] == "mail_list" and data["counts"] == {"unread": 3, "ads": 2, "all": 7, "reply": 2}
+    assert [(r["ref"], r["from"], r["marks"]) for r in data["rows"]] == [
+        (1, "김민수", ["reply", "attachment"]), (2, "이서연", ["reply"]), (3, "보안팀", ["risk"])]
+    assert "[메일 목록 시작" in listed.text
+    reply = await gateway.call(ctx(1, session="g5"), "google.list_mail", {"filter": "reply"})
+    assert [r["from"] for r in reply.display[0]["data"]["rows"]] == ["김민수", "이서연"]
+
+
+async def test_cleanup_is_planned_then_run_with_consent_then_undone(gateway):
+    s = "g6"
+    await gateway.call(ctx(1, session=s), "google.list_mail", {"filter": "ads"})
+    plan = await gateway.call(ctx(2, session=s), "google.cleanup_mail", {"spam": "1", "archive": "2"})
+    assert plan.needs_confirmation and not plan.executed and "보관 1통, 스팸으로 이동 1통" in plan.confirmation_text
+    fake = google._fakes.of(ctx(session=s))
+    assert await fake.counts() == {"unread": 3, "ads": 2, "all": 7}                    # nothing changed yet
+    done = await gateway.call(ctx(3, "응, 정리해", session=s), "google.cleanup_mail", {"spam": "1", "archive": "2"})
+    report = done.display[0]["data"]
+    assert done.executed and done.display[0]["kind"] == "cleanup_report" and report["done"] == 2
+    assert "보관 1통, 스팸 1통" in done.text and await fake.counts() == {"unread": 3, "ads": 0, "all": 5}
+    undo = await gateway.call(ctx(4, session=s), "google.undo_cleanup", {"report_id": report["report_id"], "refs": "1"})
+    assert undo.executed and undo.display[0]["data"]["undone"] == 1 and await fake.counts() == {"unread": 3, "ads": 1, "all": 6}
+    rest = await gateway.call(ctx(5, session=s), "google.undo_cleanup", {})
+    assert rest.display[0]["data"]["undone"] == 2 and await fake.counts() == {"unread": 3, "ads": 2, "all": 7}
+    again = await gateway.call(ctx(6, session=s), "google.undo_cleanup", {})
+    assert not again.executed and "이미 모두" in again.text
+
+
+async def test_cleanup_refuses_numbers_not_on_screen_or_twice(gateway):
+    s = "g7"
+    await gateway.call(ctx(1, session=s), "google.list_mail", {"filter": "ads"})
+    missing = await gateway.call(ctx(2, session=s), "google.cleanup_mail", {"spam": "9"})
+    assert not missing.ok and missing.error_type == "invalid_input"
+    twice = await gateway.call(ctx(2, session=s), "google.cleanup_mail", {"spam": "1", "trash": "1"})
+    assert not twice.ok and "두 가지" in twice.text
+
+
+async def test_real_backend_cleanup_request_shapes(tmp_path, monkeypatch):
+    from agentkit.secrets import SecretStore
+    store = SecretStore(tmp_path)
+    store.put("google", {"refresh_token": "r", "client_id": "c"}, kind="oauth")
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "A", "expires_in": 3600})
+        return httpx.Response(200, json={})
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    backend = google.RealGoogle(store)
+    await backend.apply("spam", ["a", "b"])
+    await backend.revert("spam", ["a"])
+    await backend.apply("trash", ["c"])
+    await backend.revert("trash", ["c"])
+    bodies = [(c.url.path, json.loads(c.content) if c.content else None) for c in calls if c.url.host != "oauth2.googleapis.com"]
+    assert bodies == [
+        ("/gmail/v1/users/me/messages/batchModify", {"ids": ["a", "b"], "addLabelIds": ["SPAM"], "removeLabelIds": ["INBOX"]}),
+        ("/gmail/v1/users/me/messages/batchModify", {"ids": ["a"], "addLabelIds": ["INBOX"], "removeLabelIds": ["SPAM"]}),
+        ("/gmail/v1/users/me/messages/c/trash", None), ("/gmail/v1/users/me/messages/c/untrash", None)]
+
+
+async def test_real_backend_retries_a_rate_limit_and_does_not_call_it_a_missing_permission(tmp_path, monkeypatch):
+    from agentkit.secrets import SecretStore
+    store = SecretStore(tmp_path)
+    store.put("google", {"refresh_token": "r", "client_id": "c"}, kind="oauth")
+    answers = iter([httpx.Response(403, json={"error": {"errors": [{"reason": "userRateLimitExceeded"}]}}),
+                    httpx.Response(200, json={"messages": [{"id": "x"}]})])
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "A", "expires_in": 3600})
+        return next(answers)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    real_sleep = google.asyncio.sleep
+    monkeypatch.setattr(google.asyncio, "sleep", lambda seconds: real_sleep(0))
+    assert await google.RealGoogle(store)._ids("in:inbox", 10) == ["x"]

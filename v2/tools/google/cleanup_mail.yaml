@@ -1,0 +1,46 @@
+# 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
+name: cleanup_mail
+description: '화면 목록의 메일을 정리한다: 읽음/안 읽음 표시, 보관, 스팸, 휴지통. 모두 되돌릴 수 있다. 처음 호출하면 정리하지 않고 계획(무엇을 몇 통)을 화면과 확인 문장으로 보여 준다. 사용자가
+  동의하면 같은 인자로 다시 호출해야 정리되고, 결과 보고가 화면에 나온다. ''광고 정리해 줘''면 광고 목록을 먼저 list_mail로 보여 주고 그 번호로 부른다.'
+effect: write
+input_schema:
+  type: object
+  properties:
+    spam:
+      type: string
+      description: 스팸으로 옮길 메일 번호들
+    archive:
+      type: string
+      description: 보관(받은편지함에서 빼기)할 메일 번호들
+    read:
+      type: string
+      description: 읽음으로 표시할 메일 번호들
+    unread:
+      type: string
+      description: 안 읽음으로 표시할 메일 번호들
+    trash:
+      type: string
+      description: 휴지통으로 옮길 메일 번호들
+output_schema:
+  type: string
+  description: 모델에 전할 글
+confirm_template: '{sentence}'
+idempotency_fields:
+- spam
+- archive
+- read
+- unread
+- trash
+timeout_s: 15.0
+retries: 0
+pii_input: []
+pii_output: []
+filler: 정리할 메일을 모아 볼게요.
+display:
+  kind: cleanup_report
+  path: report
+adapter:
+  kind: python
+  target: agentkit.tools.google:cleanup_mail
+  options:
+    preview: agentkit.tools.google:preview_cleanup_mail

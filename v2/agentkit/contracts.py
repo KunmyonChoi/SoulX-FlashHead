@@ -238,7 +238,8 @@ class AdapterSpec(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
-DisplayKind = Literal["menu", "items", "cart", "confirm", "receipt", "notice"]
+DisplayKind = Literal["menu", "items", "cart", "confirm", "receipt", "notice",
+                      "mail_list", "cleanup_report"]   # the last two: the office assistant screen (web/office.html)
 
 
 class DisplaySpec(BaseModel):

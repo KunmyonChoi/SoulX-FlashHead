@@ -24,7 +24,8 @@ FLIGHT = ["verify_booking", "get_booking", "search_alternative_flights", "quote_
 # ---- the contracts ----------------------------------------------------------------------
 
 
-GOOGLE = ["list_events", "find_free_time", "create_event", "mail_briefing", "search_mail", "read_mail", "send_mail", "create_draft", "send_draft"]
+GOOGLE = ["list_events", "find_free_time", "create_event", "mail_briefing", "search_mail", "read_mail", "send_mail", "create_draft", "send_draft",
+          "list_mail", "cleanup_mail", "undo_cleanup"]
 PACKS = {"shop": SHOP[:4], "common": SHOP[4:], "lookup": V1, "cafe": CAFE, "web": WEB, "clinic": CLINIC, "burger": DRIVE, "airline": FLIGHT,
          "google": GOOGLE}
 
