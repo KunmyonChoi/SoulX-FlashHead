@@ -75,3 +75,35 @@ def test_service_token_and_forged_or_expired_cookies(app):
 def test_short_password_is_refused(app):
     with pytest.raises(ValueError):
         auth.set_password("short")
+
+
+def test_a_refused_websocket_is_closed_with_4401_after_the_handshake(app):
+    auth.set_password("correct horse battery")
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with client.websocket_connect("/ws") as socket:      # the handshake is accepted ...
+            socket.receive_text()
+    assert closed.value.code == 4401                         # ... so the page sees 4401 and goes to /login
+
+
+async def test_parallel_wrong_passwords_are_tried_one_at_a_time(app, monkeypatch):
+    import asyncio
+    import time as _time
+    import httpx
+    auth.set_password("correct horse battery")
+    auth._failures.update(count=0, until=0.0)
+    auth._login_lock = None
+    tried = []
+    real_check = auth.check_password
+    monkeypatch.setattr(auth, "check_password", lambda pw: tried.append(pw) or real_check(pw))
+    sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda s: sleep(0))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+        answers = await asyncio.gather(*[client.post("/api/login", json={"password": f"guess {i}"}) for i in range(30)])
+    assert len(tried) == 5                                   # then locked for a minute
+    assert sum(a.status_code == 429 for a in answers) == 25
+    auth._failures.update(count=0, until=0.0)
+
+
+def test_the_login_page_only_returns_to_this_server():
+    assert "u.origin === location.origin" in auth.LOGIN_PAGE and "/[\\\\]/.test(next)" in auth.LOGIN_PAGE

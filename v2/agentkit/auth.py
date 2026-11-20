@@ -140,7 +140,10 @@ class OwnerOnly:
             return await self.app(scope, receive, send)
         if scope["type"] == "websocket":
             await receive()                                   # websocket.connect
-            await send({"type": "websocket.close", "code": 4401})
+            # accept first: a close before the handshake is turned into an HTTP 403 by the server, and the page
+            # then sees 1006 instead of 4401 and can't send the user to /login (review 2026-11-20)
+            await send({"type": "websocket.accept"})
+            await send({"type": "websocket.close", "code": 4401, "reason": "login_required"})
             return
         path = scope.get("path") or "/"
         if path.startswith("/api/"):
@@ -179,12 +182,16 @@ document.getElementById('f').onsubmit = async e => {
   const r = await fetch('/api/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({password: document.getElementById('pw').value})});
   if (r.ok) { const next = new URLSearchParams(location.search).get('next') || '/';
-    location.href = next.startsWith('/') && !next.startsWith('//') ? next : '/'; }
+    // only a page of this server: "/\\evil.example" is read by browsers as another site (review 2026-11-20)
+    let to = '/';
+    try { const u = new URL(next, location.origin); if (u.origin === location.origin && !/[\\\\]/.test(next)) to = u.pathname + u.search + u.hash; } catch (err) {}
+    location.href = to; }
   else { document.getElementById('msg').textContent = (await r.json()).detail || '로그인하지 못했습니다'; }
 };
 </script></main></body></html>"""
 
 _failures = {"count": 0, "until": 0.0}
+_login_lock = None      # one password check at a time: parallel tries all passed the lockout check (review 2026-11-20)
 
 
 def add_routes(app):
@@ -198,17 +205,21 @@ def add_routes(app):
     @app.post("/api/login")
     async def login(body: dict = Body(default=None)):
         import asyncio
+        global _login_lock
         if not enabled():
             return JSONResponse({"ok": True, "detail": "로그인이 꺼져 있습니다"})
-        if time.time() < _failures["until"]:
-            return JSONResponse({"ok": False, "detail": "잠시 뒤에 다시 시도하세요"}, status_code=429)
-        if not check_password(str((body or {}).get("password") or "")):
-            _failures["count"] += 1
-            await asyncio.sleep(1.0)
-            if _failures["count"] >= 5:
-                _failures.update(count=0, until=time.time() + 60)
-            return JSONResponse({"ok": False, "detail": "비밀번호가 맞지 않습니다"}, status_code=401)
-        _failures["count"] = 0
+        if _login_lock is None:
+            _login_lock = asyncio.Lock()
+        async with _login_lock:          # the check, the wait after a wrong password and the count, one try at a time
+            if time.time() < _failures["until"]:
+                return JSONResponse({"ok": False, "detail": "잠시 뒤에 다시 시도하세요"}, status_code=429)
+            if not check_password(str((body or {}).get("password") or "")):
+                _failures["count"] += 1
+                if _failures["count"] >= 5:
+                    _failures.update(count=0, until=time.time() + 60)
+                await asyncio.sleep(1.0)
+                return JSONResponse({"ok": False, "detail": "비밀번호가 맞지 않습니다"}, status_code=401)
+            _failures["count"] = 0
         response = JSONResponse({"ok": True})
         response.set_cookie(COOKIE, make_cookie(), max_age=SESSION_S, httponly=True, samesite="strict", path="/")
         return response

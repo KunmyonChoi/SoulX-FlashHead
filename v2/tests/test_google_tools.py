@@ -287,3 +287,33 @@ async def test_disconnecting_stops_a_waiting_send_to_the_real_account(monkeypatc
     assert google.cancel_real_sends() == 1
     await asyncio.sleep(0.5)
     assert sent == []
+
+
+def test_only_lookalike_domains_are_marked_suspicious():
+    mail = lambda address: {"from_email": address, "subject": "검토 부탁드립니다", "snippet": "", "unread": True, "category": "primary"}
+    for address in ["kim@g2b.go.kr", "lee@k8s.io", "park@w3c.org", "a@b2b.co.kr"]:
+        assert "risk" not in google.marks(mail(address)) and "reply" in google.marks(mail(address)), address
+    for address in ["security-check@examp1e.com", "help@g00gle.com", "pay@paypa1.com", "x@xn--80ak6aa92e.com"]:
+        assert "risk" in google.marks(mail(address)), address
+
+
+async def test_address_lookup_runs_in_parallel_and_is_kept_for_the_consented_call():
+    import asyncio
+    calls, running, most = [], [0], [0]
+
+    class Real(google.RealGoogle):
+        def __init__(self):
+            self._token = None
+
+        async def _call(self, method, path, params=None, **kw):
+            calls.append(path)
+            if path.endswith("/messages"):
+                return {"messages": [{"id": f"x{i}"} for i in range(10)]}
+            running[0] += 1; most[0] = max(most[0], running[0])
+            await asyncio.sleep(0.01)
+            running[0] -= 1
+            return {"payload": {"headers": [{"name": "From", "value": "김민수 <minsu@example.com>"}]}}
+    real = Real()
+    assert await real.find_email("김민수") == ["minsu@example.com"]
+    assert len(calls) == 11 and 1 < most[0] <= 5
+    assert await real.find_email("김민수") == ["minsu@example.com"] and len(calls) == 11    # no second round

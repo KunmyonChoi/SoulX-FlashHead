@@ -228,6 +228,9 @@ class FakeGoogle:
         return {"id": f"s{len(self.sent)}"}
 
 
+FOUND_TTL = 300        # seconds an address lookup by name is kept
+
+
 class RealGoogle:
     """The user's Google account through the REST APIs."""
 
@@ -319,15 +322,27 @@ class RealGoogle:
                                             params={"sendUpdates": "none"}))
 
     async def find_email(self, name):
+        """Addresses used with this name, from up to 10 recent mails. The headers are fetched in parallel and the answer
+        is kept for a few minutes: the preview and the consented call ask the same, and one at a time made a booking
+        with three named attendees take about 66 calls in a row (review 2026-11-20)."""
+        cache = self.__dict__.setdefault("_found", {})
+        if name in cache and cache[name][0] > time.time() - FOUND_TTL:
+            return list(cache[name][1])
         found = await self._call("GET", "/gmail/v1/users/me/messages", params={"q": f"from:{name} OR to:{name}", "maxResults": 10})
+        gate = asyncio.Semaphore(5)        # as for the list: more at once draws 403 from Gmail
+
+        async def headers_of(item):
+            async with gate:
+                meta = await self._call("GET", f"/gmail/v1/users/me/messages/{item['id']}", params={
+                    "format": "metadata", "metadataHeaders": ["From", "To"]})
+            return meta.get("payload", {}).get("headers", [])
         emails = set()
-        for item in found.get("messages", [])[:10]:
-            meta = await self._call("GET", f"/gmail/v1/users/me/messages/{item['id']}", params={
-                "format": "metadata", "metadataHeaders": ["From", "To"]})
-            for header in meta.get("payload", {}).get("headers", []):
+        for headers in await asyncio.gather(*(headers_of(item) for item in found.get("messages", [])[:10])):
+            for header in headers:
                 for display, address in email.utils.getaddresses([header.get("value", "")]):
                     if name in display and address:
                         emails.add(address)
+        cache[name] = (time.time(), sorted(emails))
         return sorted(emails)
 
     # mail
@@ -872,13 +887,29 @@ _ASKS = re.compile(r"\?|요청|부탁|회신|검토|가능할까|어떠세요|�
 _NOREPLY = re.compile(r"no-?reply|noti|news|event|mailer|alert", re.I)
 
 
+# Domains that look like a known one with letters swapped for digits ("examp1e", "g00gle", "paypa1"), or that are
+# written in punycode. Any letter-digit-letter used to count, which marked ordinary senders such as g2b.go.kr
+# (public procurement), k8s.io and w3c.org as suspicious (review 2026-11-20).
+_LOOKALIKE = str.maketrans("0135", "oles")
+_KNOWN = {"google", "gmail", "naver", "kakao", "kakaobank", "daum", "toss", "paypal", "apple", "icloud", "microsoft",
+          "outlook", "amazon", "coupang", "samsung", "shinhan", "kbstar", "wooribank", "hanabank", "nhbank", "netflix",
+          "github", "example", "musinsa"}
+
+
+def _lookalike(domain):
+    labels = domain.lower().split(".")
+    if any(label.startswith("xn--") for label in labels):
+        return True
+    return any(re.search(r"\d", label) and label.translate(_LOOKALIKE).replace("-", "") in _KNOWN for label in labels)
+
+
 def marks(m):
     """What the screen and the model are told about a mail at a glance."""
     ad = m.get("category") in ("promotions", "social")
     domain = (m.get("from_email") or "").split("@")[-1]
     text = (m.get("subject") or "") + " " + (m.get("snippet") or "")
     out = []
-    if _RISK.search(text) or re.search(r"[a-z]\d[a-z]", domain):
+    if _RISK.search(text) or _lookalike(domain):
         out.append("risk")
     if ad:
         out.append("ad")
