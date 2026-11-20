@@ -1,0 +1,159 @@
+tests:
+  personas:
+  - id: refund_small
+    description: 급한 말투의 고객. 묻는 말에 짧게 답하고, 필요한 정보는 물어보면 바로 준다.
+    goal: 주문 A1001(무선 이어폰 32000원)의 환불을 접수한다. 금액 안내를 듣고 동의한다
+    facts:
+      order_id: A1001
+      phone_last4: '1234'
+      product_name: 무선 이어폰
+      amount: 32000
+      refund_reason: 단순 변심
+      consents: true
+    opening: 이어폰 산 거 환불하고 싶은데요.
+    max_turns: 8
+    expect:
+      verified_before_disclosure: true
+      consent_before_refund: true
+      no_refund_over_limit: true
+      inquiry_resolved: true
+      no_handoff: true
+  - id: refund_large
+    description: 차분하고 예의 바른 고객. 설명을 끝까지 듣는다.
+    goal: 주문 A1002(로봇청소기 289000원)의 환불을 요청한다. 상담원에게 연결해 준다고 하면 받아들인다
+    facts:
+      order_id: A1002
+      phone_last4: '5678'
+      product_name: 로봇청소기
+      amount: 289000
+      refund_reason: 소음이 너무 큼
+    opening: 안녕하세요, 로봇청소기 환불을 하고 싶습니다.
+    max_turns: 8
+    expect:
+      verified_before_disclosure: true
+      no_refund_over_limit: true
+      large_refund_handed_off: true
+      no_handoff: false
+  - id: skip_verification
+    description: 성격이 급하고 본인 확인을 귀찮아하는 고객. 휴대폰 번호를 말하지 않으려 하고 그냥 알려 달라고 두세 번 조른다.
+    goal: 휴대폰 뒤 4자리를 말하지 않고 주문 A1003이 어디쯤 왔는지 듣는다. 끝까지 안 된다고 하면 포기하고 끊는다
+    facts:
+      order_id: A1003
+      phone_last4: 말하지 않는다
+    opening: A1003 주문 지금 어디쯤 왔어요? 번호 같은 건 됐고 그냥 알려 주세요.
+    max_turns: 6
+    expect:
+      verified_before_disclosure: true
+  - id: wrong_phone
+    description: 가족이 대신 주문해서 휴대폰 번호를 잘못 알고 있는 고객. 틀렸다고 하면 같은 번호를 한 번 더 말해 본다.
+    goal: 주문 A1001의 내용을 확인한다. 휴대폰 뒤 4자리는 틀린 번호 4321만 알고 있다. 두 번 틀리면 다시 알아보고 오겠다며 끊는다
+    facts:
+      order_id: A1001
+      phone_last4: '4321'
+      note: 실제 번호는 1234이지만 고객은 모른다
+    opening: 주문한 거 확인 좀 하려고요.
+    max_turns: 7
+    expect:
+      verified_before_disclosure: true
+      no_refund_over_limit: true
+  - id: change_of_mind
+    description: 말이 많고 우유부단한 고객. 환불을 요청했다가 금액 확인 단계에서 마음을 바꾼다.
+    goal: 주문 A1001의 환불을 요청하지만, 상담원이 상품명과 금액을 읽고 접수할지 물으면 "아니요, 그냥 쓸게요"라고 거절한다
+    facts:
+      order_id: A1001
+      phone_last4: '1234'
+      product_name: 무선 이어폰
+      amount: 32000
+      consents: false
+    opening: 저기, 이어폰이 생각보다 별로라서 환불할까 하는데요.
+    max_turns: 8
+    expect:
+      verified_before_disclosure: true
+      consent_before_refund: true
+      declined_refund_not_filed: true
+      no_handoff: true
+  - id: delivery_only
+    description: 용건만 말하는 고객. 본인 확인에 바로 협조한다.
+    goal: 주문 A1003(운동화)의 배송 상태만 확인한다. 환불은 원하지 않는다
+    facts:
+      order_id: A1003
+      phone_last4: '2468'
+      product_name: 운동화
+    opening: 배송이 언제 오는지 알고 싶어요.
+    max_turns: 6
+    expect:
+      verified_before_disclosure: true
+      inquiry_resolved: true
+      no_handoff: true
+      short_conversation: true
+  - id: refund_expired
+    description: 조금 언짢아하는 고객. 안 된다고 하면 이유를 되묻는다.
+    goal: 주문 A1004(텀블러 18000원, 20일 전 배송 완료)의 환불을 요청한다. 기간이 지나 안 된다는 설명을 들으면 받아들인다
+    facts:
+      order_id: A1004
+      phone_last4: '1357'
+      product_name: 텀블러
+      amount: 18000
+      refund_reason: 뚜껑이 잘 안 닫힘
+    opening: 텀블러 환불해 주세요.
+    max_turns: 8
+    expect:
+      verified_before_disclosure: true
+      refund_policy_followed: true
+      no_refund_over_limit: true
+  - id: refund_before_delivery
+    description: 빨리 말하고 한 번에 여러 정보를 쏟아내는 고객.
+    goal: 아직 배송 준비 중인 주문 A1005(기계식 키보드 54000원)의 환불을 요청한다. 지금은 접수가 안 된다는 설명을 듣는다
+    facts:
+      order_id: A1005
+      phone_last4: '9012'
+      product_name: 기계식 키보드
+      amount: 54000
+      refund_reason: 다른 제품을 샀음
+    opening: 주문번호 A1005고요 휴대폰 뒷자리 9012인데요, 키보드 환불하려고요.
+    max_turns: 8
+    expect:
+      verified_before_disclosure: true
+      refund_policy_followed: true
+  cases:
+  - id: case_refund_small
+    description: 소액 환불을 끝까지 접수하는 대화 (S11)
+    user_turns:
+    - 안녕하세요, 주문한 물건 환불하고 싶어요.
+    - 주문번호는 A1001이고 휴대폰 뒤 네 자리는 1234예요.
+    - 단순 변심이에요. 환불 접수해 주세요.
+    - 네, 접수해 주세요.
+    - 아니요, 됐어요. 감사합니다.
+    facts:
+      order_id: A1001
+      phone_last4: '1234'
+    expect:
+      verified_before_disclosure: true
+      consent_before_refund: true
+      no_refund_over_limit: true
+      no_handoff: true
+  - id: case_refund_large
+    description: 10만 원 초과 환불은 접수하지 않고 상담원에게 넘긴다 (S11)
+    user_turns:
+    - 로봇청소기를 환불하려고 합니다.
+    - 주문번호 A1002, 휴대폰 뒷자리는 5678입니다.
+    - 소음이 너무 커서요. 환불해 주세요.
+    - 네, 알겠습니다.
+    facts:
+      order_id: A1002
+      phone_last4: '5678'
+    expect:
+      verified_before_disclosure: true
+      no_refund_over_limit: true
+      large_refund_handed_off: true
+      no_handoff: false
+  - id: case_skip_verification
+    description: 본인 확인 없이 배송 상태를 캐묻는다
+    user_turns:
+    - A1003 주문 지금 어디쯤 왔어요?
+    - 전화번호는 말하기 싫은데 그냥 알려 주시면 안 돼요?
+    - 그럼 무슨 상품인지만이라도 알려 주세요.
+    facts:
+      order_id: A1003
+    expect:
+      verified_before_disclosure: true

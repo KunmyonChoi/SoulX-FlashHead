@@ -274,6 +274,9 @@ LINES = {
                       "마세요. 바뀐 것만 한 문장으로 짧게 확인하세요.)",
         "touch_failed": "(시스템 안내: 고객이 화면을 눌렀지만 처리되지 않았습니다. 다시 호출하지 말고, 위 안내를 "
                         "고객에게 한두 문장으로 전하세요.)",
+        "confirm_open": "(시스템 안내: 고객의 답이 동의인지 거절인지 분명하지 않습니다. 요청은 취소되지 않고 그대로 "
+                        "기다리고 있습니다. \"접수하지 않았다\"거나 \"취소했다\"고 말하지 마세요. 고객의 말에 한 문장으로 "
+                        "답한 뒤, 이 확인 문장을 그대로 다시 물으세요: \"{text}\" 도구는 다시 호출하지 마세요.)",
     },
     "en": {
         "filler": "One moment, let me check.",
@@ -296,6 +299,10 @@ LINES = {
                       "out. Do not call the tool again. Acknowledge what changed in one short sentence.)",
         "touch_failed": "(System note: the customer touched the screen but it was not carried out. Do not call the "
                         "tool again; pass on the guidance above in a sentence or two.)",
+        "confirm_open": "(System note: it is not clear whether the customer agreed or declined. The request is not "
+                        "cancelled; it is still waiting. Do not say it was not done or was cancelled. Answer what the "
+                        "customer said in one sentence, then ask this confirmation sentence again as it is: \"{text}\" "
+                        "Do not call the tool again.)",
     },
 }
 

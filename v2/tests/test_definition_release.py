@@ -9,14 +9,16 @@ import pytest
 from agentkit.contracts import AgentDefinition, Deployment, ExtractField, HandoffRule, ReleaseError, VersionInfo
 from agentkit.definition import DefinitionError, DefinitionStore
 
+from agents_baseline import copy_baseline, snapshot
 REAL_AGENTS = Path(__file__).resolve().parent.parent / "agents"
+BEFORE = snapshot()
 SHOP = "shop-support"
 
 
 @pytest.fixture
 def store(tmp_path):
     root = tmp_path / "agents"
-    shutil.copytree(REAL_AGENTS, root)
+    copy_baseline(root)
     return DefinitionStore(root)
 
 
@@ -431,7 +433,5 @@ def test_resolve_without_deployment(store):
 
 
 def test_real_agents_directory_untouched():
-    """These tests never write to v2/agents."""
-    store = DefinitionStore(REAL_AGENTS)
-    assert [v.version for v in store.list_versions(SHOP)] == [1]
-    assert store.deployment(SHOP).stable == 1 and store.deployment(SHOP).previous_stable is None
+    """These tests never write to v2/agents (compared with the directory as it was when this module loaded)."""
+    assert snapshot() == BEFORE

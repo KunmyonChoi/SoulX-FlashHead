@@ -14,6 +14,7 @@ from agentkit.contracts import Comparison
 from agentkit.definition import DefinitionStore
 
 V2 = Path(__file__).resolve().parent.parent
+from agents_baseline import copy_baseline
 REAL_AGENTS = V2 / "agents"
 
 CATALOG = {
@@ -32,8 +33,7 @@ def copy_agents(tmp_path) -> DefinitionStore:
     Versions that are not deployed are put back to "draft" in the copy: running the test suites of an
     agent on the real store makes its version "tested" (kiosk-order on 2026-11-17), and these tests are
     about what the builder does to a draft, not about which agents someone happened to test."""
-    root = Path(tmp_path) / "agents"
-    shutil.copytree(REAL_AGENTS, root)
+    root = copy_baseline(Path(tmp_path) / "agents")
     for meta_path in root.glob("*/versions/*/meta.json"):
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         if meta.get("state") in ("tested", "pending_approval", "approved"):

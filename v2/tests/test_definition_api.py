@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from agentkit.definition import DefinitionStore
 from agentkit.definition.api import router
 
+from agents_baseline import copy_baseline
 REAL_AGENTS = Path(__file__).resolve().parent.parent / "agents"
 SHOP = "shop-support"
 
@@ -16,7 +17,7 @@ SHOP = "shop-support"
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     root = tmp_path / "agents"
-    shutil.copytree(REAL_AGENTS, root)
+    copy_baseline(root)
     monkeypatch.setenv("AGENTKIT_AGENTS_DIR", str(root))
     app = FastAPI()
     app.include_router(router)

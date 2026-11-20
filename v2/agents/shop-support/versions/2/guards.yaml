@@ -1,0 +1,35 @@
+guards:
+- id: no_fake_lookup
+  kind: claims_lookup
+  pattern: (확인|조회|찾아)\S{0,2}\s?(보니|봤더니|본 결과)
+  unless_tools:
+  - verify_customer
+  - get_order
+  - track_delivery
+  - request_refund
+  nudge: '(시스템 안내: 조회하지 않고 조회한 것처럼 말하려 했습니다. 필요하면 도구를 호출하세요.)'
+- id: no_fake_refund
+  kind: claims_lookup
+  pattern: 환불\S{0,3}\s?(접수|처리|신청)\S{0,2}\s?(됐|되었|완료|했습니다|했어요|해 드렸)
+  unless_tools:
+  - request_refund
+  nudge: '(시스템 안내: request_refund를 호출하지 않고 환불이 접수된 것처럼 말하려 했습니다. 고객이 동의했다면 같은 인자로 request_refund를 호출하고,
+    아니라면 접수되었다는 말을 하지 마세요.)'
+- id: no_fake_handoff
+  kind: claims_lookup
+  pattern: 상담원\S{0,3}\s?(연결(하겠|해 드리겠|해 드릴게|할게|됐|되었)|넘겨 드리겠)
+  unless_tools:
+  - handoff_to_human
+  nudge: '(시스템 안내: handoff_to_human을 호출하지 않고 상담원에게 연결한다고 말하려 했습니다. 연결이 필요하면 지금 handoff_to_human을 호출하세요.)'
+- id: no_sensitive_request
+  kind: regex
+  pattern: (카드\s?번호|주민\s?(등록)?\s?번호|비밀\s?번호|계좌\s?번호)\S{0,2}\s?(알려|말씀|불러|입력)
+  unless_tools: []
+  nudge: '(시스템 안내: 카드 번호, 주민등록번호, 비밀번호, 계좌 번호는 묻지 않습니다. 본인 확인은 주문번호와 휴대폰 뒤 4자리로만 하세요.)'
+- id: confirm_through_tool
+  kind: claims_lookup
+  pattern: ((접수|환불|진행)(을|를)?\s?(해 드릴|해드릴|할|진행할|진행해 드릴)까요|이대로\s?(접수|진행|환불)|환불(을|를)?\s?(원하시|하시)는\s?게\s?맞으)
+  unless_tools:
+  - request_refund
+  nudge: '(시스템 안내: 환불 접수 전 확인을 직접 물으려 했습니다. 확인 문장은 request_refund 도구가 만듭니다. 지금 고객이 말한 주문번호와 사유로 request_refund를
+    호출하고, 받은 확인 문장을 그대로 읽으세요.)'

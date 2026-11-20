@@ -62,6 +62,8 @@ class _Turn:
         self.marked = set()          # output phases already reported
         self.pending_spans = []      # a speculative reply holds its spans back until it completes
         self.called = set()          # tools called for this reply
+        self.done = set()            # ...that count as done for the guards: reads, and writes that really ran
+        self.asked = set()           # writes that only asked the customer to agree (needs_confirmation)
         self.fillered = False
         self.handoff = False
         self.interrupted = False
@@ -317,6 +319,12 @@ class Engine:
         if not result.ms:
             result.ms = (time.perf_counter() - started) * 1000
         state.called.add(name)
+        # "환불이 접수되었습니다" is allowed only after the refund ran: a write call that only asked for
+        # consent, or failed, does not count (it used to, and the false claim got through)
+        if getattr(contracts[name], "effect", "read") != "write" or (result.ok and not result.needs_confirmation):
+            state.done.add(name)
+        elif result.needs_confirmation:
+            state.asked.add(name)
         text = result.text or ""
         if result.needs_confirmation:
             # the model reads the sentence to the customer; the engine never confirms on its own
@@ -581,6 +589,7 @@ class Engine:
                            output={"text": text}, attrs={"tools": [c["name"] for c, _, _ in round_results], "saved_pass": True})
                 return [ReplyEvent(type="delta", text=text)] + [ReplyEvent(type="piece", text=part) for part in parts]
 
+            still_open = None     # a confirmation the customer has not answered yet: it must be asked again
             touched = False
             if _touch is not None:
                 # The customer did it on the screen: the tool runs now, without the model. The model
@@ -603,6 +612,20 @@ class Engine:
                     for event in speak_template(text, time.time()):
                         yield event
                     templated = True
+            elif (answer := self._pending_answer(state)) is not None:
+                # the customer is answering a confirmation question: settle it before the model speaks
+                tool_rounds += 1
+
+                def answer_note(result):
+                    # neither yes nor no (a reason, a question): the request still waits and must be asked again
+                    nonlocal still_open
+                    if not result.ok and result.error_type == "not_confirmed" and result.confirmation_text:
+                        still_open = result.confirmation_text
+                        return line("confirm_open", turn_language, text=result.confirmation_text)
+                    return ""
+
+                async for event in tool_round([answer], note=answer_note):
+                    yield event
 
             while not templated and pass_number < MAX_TOOL_ROUNDS + 3:
                 pass_number += 1
@@ -674,7 +697,7 @@ class Engine:
                             piece, buffer = take_piece(buffer, PIECE_CHARS if answer_started else FIRST_PIECE_CHARS)
                             if not piece:
                                 break
-                            hit = self._screen(piece, state.called | {c["name"] for c in calls})
+                            hit = self._screen(piece, self._guard_tools(state, calls))
                             if hit is not None:
                                 before, sentence, after, guard = hit
                                 spoken = speakable(before)
@@ -726,7 +749,7 @@ class Engine:
                     continue
                 while buffer.strip():
                     # the end of the pass is a sentence end too
-                    hit = self._screen(buffer, state.called | {c["name"] for c in calls})
+                    hit = self._screen(buffer, self._guard_tools(state, calls))
                     if hit is None:
                         break
                     before, sentence, after, guard = hit
@@ -806,6 +829,13 @@ class Engine:
             spoken = speakable(buffer)
             if spoken:
                 yield ReplyEvent(type="piece", text=spoken)
+            if still_open and still_open not in reply["content"] and not self.handed_off:
+                # the model answered but did not ask again: without the question the customer would not know
+                # that the request is still waiting for them
+                ask = speakable(still_open)
+                reply["content"] = (reply["content"].rstrip() + " " + ask).strip()
+                yield ReplyEvent(type="delta", text=" " + ask)
+                yield ReplyEvent(type="piece", text=ask)
             reply["content"] = reply["content"].strip()
             fallback = False
             if not reply["content"]:
@@ -947,14 +977,56 @@ class Engine:
         finally:
             await events.aclose()
 
+    def _guard_tools(self, state, calls):
+        """(done, asked): the tools a guard may take as having happened.
+
+        done: reads, and writes that really ran, in this reply, plus reads the model is calling right now.
+        asked: writes that only asked for consent, or that the model is calling right now. They excuse a
+        question ("환불을 접수할까요?" is the tool's own confirmation) but not a statement ("접수되었습니다"
+        beside a call that only asked was a false claim that used to get through)."""
+        contracts = self._tool_contracts()
+        writes = {c["name"] for c in calls if getattr(contracts.get(c["name"]), "effect", "read") == "write"}
+        return (state.done | {c["name"] for c in calls} - writes, state.asked | writes)
+
+    def _guard_check(self, sentence, tools):
+        done, asked = tools
+        question = sentence.rstrip().rstrip("\"')」』 ").endswith(("?", "？"))
+        return self.guards.check(sentence, done | asked if question else done)
+
+    def _pending_answer(self, state):
+        """The customer's answer to a confirmation question: the call that asked it, to be made again now.
+
+        A write tool with a confirm_template asks first; the same call in the NEXT turn runs it if the
+        customer agreed. Left to the model, that second call was often missing (it read a reason or a
+        question as "no", or asked again in its own words), so the request expired and the customer had
+        to agree two or three times. The engine makes the call itself; the gateway still decides from
+        the customer's words: yes runs it, no cancels it, anything else keeps it open and asks again.
+        Only when exactly one request was proposed in the turn before."""
+        pending = getattr(self.gateway, "pending", None)
+        if not callable(pending) or state.speculative or getattr(state, "notice", False):
+            return None
+        try:
+            waiting = [p for p in pending(self.session_id) if p.get("turn") == state.number - 1]
+        except Exception:
+            return None
+        if len(waiting) != 1:
+            return None
+        names = {tool_id: short for short, tool_id in self._tool_ids.items()}
+        name = names.get(waiting[0]["tool"], waiting[0]["tool"])
+        if name not in self._tool_contracts():
+            return None
+        return {"name": name, "arguments": dict(waiting[0]["arguments"])}
+
     def _screen(self, text, called):
         """Runs the guards over text that is about to be cleared for speech.
 
         Returns None, or (before, sentence, after, guard): the first sentence that violates a guard,
         with the innocent text around it, so that only that sentence is withheld.
         """
-        guard = self.guards.check(text, called) if self.guards else None
-        if guard is None:
+        if not self.guards:
+            return None
+        done, asked = called
+        if self.guards.check(text, done) is None:   # the strictest reading finds nothing: nothing to withhold
             return None
         sentences, rest = [], text
         while True:
@@ -965,9 +1037,12 @@ class Engine:
         if rest:
             sentences.append(rest)
         for index, sentence in enumerate(sentences):
-            found = self.guards.check(sentence, called)
+            found = self._guard_check(sentence, called)
             if found is not None:
                 return "".join(sentences[:index]), sentence, "".join(sentences[index + 1:]), found
+        guard = self._guard_check(text, called)
+        if guard is None:
+            return None
         return "", text, "", guard   # the pattern spans sentences: the whole text goes
 
     def _nudge(self, guard, spoken, language):

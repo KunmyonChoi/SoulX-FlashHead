@@ -1,0 +1,16 @@
+{
+  "agent_id": "shop-support",
+  "version": 2,
+  "state": "pending_approval",
+  "created_at": 1795148463.9191458,
+  "created_by": "claude",
+  "based_on": 1,
+  "note": "이중 확인 제거: 모델이 환불 확인을 직접 묻지 않게 confirm_through_tool 가드 추가 (확인 문장은 request_refund가 만든다)",
+  "safety_change": true,
+  "changed_fields": [
+    "guards"
+  ],
+  "test_run_id": "shop-support.v2.20261120-133116-619f",
+  "approved_by": null,
+  "approved_at": null
+}
