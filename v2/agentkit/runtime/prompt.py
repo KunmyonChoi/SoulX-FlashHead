@@ -84,7 +84,7 @@ WEEKDAYS_KO = "월화수목금토일"
 WEEKDAYS_EN = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MONTHS_EN = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
              "October", "November", "December")
-CALENDAR_DAYS = 7
+CALENDAR_DAYS = 14   # two weeks: "다음 주 일요일" said on a Friday is 9 days ahead
 
 
 def _date_ko(day):
@@ -107,16 +107,24 @@ def calendar_text(now, language="ko"):
     """The part that changes once a day: today's date and the days ahead, date first so the model
     looks a weekday up instead of counting to it."""
     days = [now + timedelta(days=i) for i in range(CALENDAR_DAYS + 1)]
+    # which week each day is in (weeks start on Monday): the model was seen turning "다음 주 수요일" said on a Friday
+    # into the Thursday after it, counting days instead of reading the calendar (2026-11-20)
+    monday = (now - timedelta(days=now.weekday())).date()
+    week = lambda d: (d.date() - monday).days // 7
     if language == "en":
         labels = {0: "today", 1: "tomorrow"}
+        weeks = {0: "this", 1: "next", 2: "the week after next"}
         calendar = ", ".join(f"{MONTHS_EN[d.month - 1]} {d.day} is a {WEEKDAYS_EN[d.weekday()]}"
-                             + (f" ({labels[i]})" if i in labels else "") for i, d in enumerate(days))
+                             + (f" ({labels[i]})" if i in labels else f" ({weeks[week(d)]} {WEEKDAYS_EN[d.weekday()]})" if week(d) in weeks else "")
+                             for i, d in enumerate(days))
         return (f"Today is {_date_en(now)}, {now.year}. The current time is written in square brackets in front "
                 f"of the user's latest message; answer questions about the date or time from it directly.\n"
                 f"Calendar: {calendar}.")
     labels = {0: "오늘", 1: "내일", 2: "모레"}
-    calendar = ", ".join(f"{d.month}월 {d.day}일은 {WEEKDAYS_KO[d.weekday()]}요일"
-                         + (f"({labels[i]})" if i in labels else "") for i, d in enumerate(days))
+    weeks = {0: "이번 주", 1: "다음 주", 2: "다다음 주"}
+    calendar = ", ".join(f"{d.month}월 {d.day}일은 {WEEKDAYS_KO[d.weekday()]}요일("
+                         + ", ".join(x for x in (labels.get(i), f"{weeks[week(d)]} {WEEKDAYS_KO[d.weekday()]}요일" if week(d) in weeks else None) if x)
+                         + ")" for i, d in enumerate(days))
     return (f"오늘은 {now.year}년 {_date_ko(now)}입니다. 지금 시각은 사용자의 말 앞에 대괄호로 적혀 있습니다. "
             f"지금 시각과 날짜는 이 정보로 바로 답하세요.\n달력: {calendar}.")
 

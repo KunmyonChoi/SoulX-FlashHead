@@ -214,3 +214,25 @@ async def test_mail_numbers_keep_their_meaning_when_the_list_changes(gateway):
     assert ask.confirmation_text.startswith("김민수에게")                          # still 김민수, not the first ad
     again = await gateway.call(ctx(3, session=s), "google.list_mail", {"filter": "unread"})
     assert next(r["ref"] for r in again.display[0]["data"]["rows"] if r["from"] == "김민수") == kim
+
+
+async def test_an_all_day_entry_does_not_block_free_time():
+    from datetime import datetime as dt
+    day = date.today() + timedelta(days=3)
+    start = dt.combine(day, dt.min.time(), google.TZ)
+
+    class Calendar:
+        async def events_between(self, a, b):
+            return [{"title": "생일", "start": start, "end": start + timedelta(days=1), "all_day": True},
+                    {"title": "회의", "start": start.replace(hour=10), "end": start.replace(hour=11), "all_day": False}]
+    slots = await google._free_slots(Calendar(), day, 30, (9, 0), (18, 0))
+    assert [(a.hour, b.hour) for a, b in slots] == [(9, 10), (11, 18)]
+    assert "하루 종일 '생일'" in google._event_line({"title": "생일", "start": start, "end": start + timedelta(days=1), "all_day": True})
+
+
+def test_the_prompt_calendar_names_this_and_next_week():
+    from datetime import datetime as dt
+    from agentkit.runtime.prompt import calendar_text
+    text = calendar_text(dt(2026, 11, 20, 17, 0, tzinfo=google.TZ))           # a Friday
+    assert "11월 25일은 수요일(다음 주 수요일)" in text and "11월 29일은 일요일(다음 주 일요일)" in text
+    assert "11월 20일은 금요일(오늘, 이번 주 금요일)" in text

@@ -297,7 +297,7 @@ class RealGoogle:
                 return datetime.fromisoformat(value["dateTime"].replace("Z", "+00:00")).astimezone(TZ)
             return datetime.combine(date.fromisoformat(value["date"]), datetime.min.time(), TZ)
         return {"id": item.get("id"), "title": item.get("summary") or "(제목 없음)", "start": moment(item["start"]),
-                "end": moment(item["end"]), "location": item.get("location") or "",
+                "end": moment(item["end"]), "location": item.get("location") or "", "all_day": "date" in item["start"],
                 "attendees": [a.get("displayName") or a.get("email", "") for a in item.get("attendees", [])
                               if not a.get("self")]}
 
@@ -504,6 +504,8 @@ def backend(ctx):
 
 # ---- calendar tools ----------------------------------------------------------------------------
 def _event_line(event, with_date=False):
+    if event.get("all_day"):
+        return (spoken_date(event["start"].date()) + " " if with_date else "") + f"하루 종일 '{event['title']}'"
     when = (spoken_date(event["start"].date()) + " " if with_date else "") + spoken_time(event["start"])
     length = int((event["end"] - event["start"]).total_seconds() // 60)
     who = f", 함께: {', '.join(event['attendees'])}" if event.get("attendees") else ""
@@ -513,7 +515,7 @@ def _event_line(event, with_date=False):
 
 def _event_view(e):
     return {"id": e.get("id"), "title": e["title"], "start": e["start"].isoformat(), "end": e["end"].isoformat(),
-            "attendees": e.get("attendees") or [], "location": e.get("location") or ""}
+            "attendees": e.get("attendees") or [], "location": e.get("location") or "", "all_day": bool(e.get("all_day"))}
 
 
 def _calendar(day, days, events, free=None, minutes=None):
@@ -539,7 +541,8 @@ async def _free_slots(google, day, minutes, frm, to):
     if day == _now().date():
         start = max(start, (_now() + timedelta(minutes=14)).replace(second=0, microsecond=0))
         start = start.replace(minute=(start.minute // 15) * 15)
-    busy = await google.events_between(start, end)
+    # an all-day entry (a holiday, a birthday) does not make the whole day busy
+    busy = [e for e in await google.events_between(start, end) if not e.get("all_day")]
     slots, cursor = [], start
     for event in busy:
         if event["start"] - cursor >= timedelta(minutes=minutes):

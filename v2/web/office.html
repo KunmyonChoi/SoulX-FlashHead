@@ -449,7 +449,7 @@ function renderCal() {
   const day = new Date(c.date + 'T00:00:00');
   const shift = n => { const d = new Date(day.getTime() + n * 864e5); act('show_day', { date: isoDate(d) }); };
   const lane = h('div', { class: 'lane', style: 'height:' + (end - start) * px + 'px' },
-    c.events.map(e => { const a = clamp(hour(e.start)), b = clamp(hour(e.end)); if (b <= a) return null;
+    c.events.filter(e => !e.all_day).map(e => { const a = clamp(hour(e.start)), b = clamp(hour(e.end)); if (b <= a) return null;
       return h('div', { class: 'slot event', style: `top:${(a - start) * px + 2}px;height:${Math.max(18, (b - a) * px - 4)}px`, title: e.title },
         hhmm(e.start) + ' ' + e.title + (e.location ? ' · ' + e.location : '')); }),
     c.free.map(f => { const a = clamp(hour(f.start)), b = clamp(hour(f.end)); if (b - a < 0.25) return null;
@@ -458,6 +458,7 @@ function renderCal() {
   $('sheet').replaceChildren(h('div', { style: 'display:flex;gap:8px;align-items:center;padding:10px 14px' },
       h('button', { class: 'btn quiet', onclick: () => shift(-1), 'aria-label': '전날' }, '‹'), h('b', {}, c.label), h('button', { class: 'btn quiet', onclick: () => shift(1), 'aria-label': '다음 날' }, '›'),
       h('span', { class: 'hint' }, c.events.length + '건' + (c.free.length ? ' · 빈 시간 ' + c.free.length + '곳' : ''))),
+    ...c.events.filter(e => e.all_day).map(e => h('div', { class: 'slot event', style: 'position:static;margin:0 14px 6px 70px' }, '종일 · ' + e.title)),
     h('div', { class: 'day' }, h('div', {}, Array.from({ length: end - start }, (_, i) => h('div', { class: 'hour', style: 'height:' + px + 'px' }, (start + i) + ':00'))), lane));
 }
 

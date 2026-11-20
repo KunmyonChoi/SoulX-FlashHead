@@ -42,7 +42,7 @@ async def test_prompt_order_and_content():
     assert "변경 도구(request_refund)는 두 단계로" in system
     assert "같은 인자로 그 도구를 다시 호출" in system and "동의" in system
     # date and calendar in the system prompt; the minute goes in front of the user's words
-    assert "11월 18일은 수요일(내일)" in system and "오후 3시 5분" not in system
+    assert "11월 18일은 수요일(내일, 이번 주 수요일)" in system and "오후 3시 5분" not in system
     assert llm.last_user() == "[지금 시각: 11월 17일 화요일 오후 3시 5분]\n안녕하세요"
     assert engine.history[0] == {"role": "user", "content": "안녕하세요"}     # the clock is not stored
     # the tools offered are exactly the definition's
