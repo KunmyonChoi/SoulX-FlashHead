@@ -761,7 +761,82 @@ KNOWLEDGE_TOOL_SPECS = [
         },
     }},
 ]
-KNOWLEDGE_TOOLS = {spec["function"]["name"] for spec in KNOWLEDGE_TOOL_SPECS}
+# knowledge_mode "tool": the model searches the knowledge base itself, with a query of its own, when it is what the
+# user wants (2026-11-20: searching the user's words before every reply answered "자동차 관련 뉴스" from a
+# stored document and searched "자세히 알아봐 줘" as it was)
+SEARCH_KNOWLEDGE_SPEC = {"type": "function", "function": {
+    "name": "search_knowledge",
+    "description": "지식베이스에 저장된 기술 동향 자료를 내용으로 찾는다. 사용자가 지식베이스나 저장된 자료를 찾아 달라고 하거나, "
+                   "앞서 지식베이스에서 소개한 자료를 더 묻거나, 뉴스·인터넷이 아니라 정리된 기술 자료가 필요한 질문일 때 쓴다. "
+                   "최신 뉴스, 인터넷 검색, 날씨를 원하면 쓰지 않는다. 날짜로 자료 목록을 볼 때는 list_knowledge_by_date를 쓴다.",
+    "parameters": {"type": "object", "properties": {
+        "query": {"type": "string", "description": "찾을 내용을 담은 검색어. 사용자의 말을 그대로 넣지 말고 대화의 맥락에서 "
+                                                   "주제를 정한다. 예: \"LongCat-Video 영상 생성 모델\""}},
+        "required": ["query"]}}}
+KNOWLEDGE_TOOLS = {spec["function"]["name"] for spec in KNOWLEDGE_TOOL_SPECS} | {"search_knowledge"}
+# The user names the knowledge base: search it before the reply in either mode.
+ASKS_KNOWLEDGE = re.compile(r"지식\s?베이스|지식에서|자료에서|저장(된|해 둔|한)\s?(글|자료)|등록(된|한)\s?(글|자료)|"
+                            r"knowledge base", re.I)
+# The user asks for another source: no knowledge-base material, and no search_knowledge for that turn.
+ASKS_ELSEWHERE = re.compile(r"인터넷|웹에서|온라인|구글|뉴스|기사|위키|긱\s?뉴스|날씨|\bweb\b|internet|news|wikipedia",
+                            re.I)
+
+
+def knowledge_first(text, mode):
+    """Whether this turn searches the knowledge base before the reply (v2: runtime/knowledge.py)."""
+    if ASKS_KNOWLEDGE.search(text or ""):
+        return True
+    if mode == "tool" or ASKS_ELSEWHERE.search(text or ""):
+        return False
+    return True
+
+
+SITUATION_TURNS_BACK = 4
+SITUATION_ITEM = re.compile(r"^\s*(?:\(?\d{1,2}[.)]|[-•·]|\[\d{1,2}\])\s*(.+)$")
+
+
+def situation_note(history):
+    """Where the conversation stands, from the history (v2: runtime/situation.py): the last lookup with its
+    first items and the question last asked. Goes in front of the user's words, so that "자세히 알아봐 줘",
+    "그렇게 해줘" or "좋아" are read as continuing it."""
+    lookup, results, turns_back, asked, seen_reply = None, [], 0, "", False
+    for index in range(len(history) - 1, 0, -1):
+        message = history[index]
+        role = message.get("role")
+        if role == "user" and not str(message.get("content") or "").lstrip().startswith("("):
+            turns_back += 1
+            if turns_back > SITUATION_TURNS_BACK:
+                break
+        elif role == "assistant" and message.get("content") and not seen_reply:
+            seen_reply = True
+            parts = [p for p in re.split(r"(?<=[.?!])\s+", str(message["content"]).strip()) if p]
+            if parts and parts[-1].endswith(("?", "？")):
+                asked = parts[-1][:120]
+        elif role == "assistant" and message.get("tool_calls") and lookup is None:
+            calls = [c.get("function", c) for c in message["tool_calls"]]
+            if calls:
+                lookup = calls
+                results = [m.get("content") for m in history[index + 1:index + 1 + len(calls)] if m.get("role") == "tool"]
+        if lookup is not None and seen_reply:
+            break
+    if not lookup and not asked:
+        return ""
+    lines = []
+    if lookup:
+        def args(a):
+            return ", ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in (a or {}).items() if v not in (None, ""))
+        items = []
+        for result in results:
+            for raw in str(result or "").splitlines():
+                found = SITUATION_ITEM.match(raw)
+                if found and len(items) < 5:
+                    items.append(re.sub(r"\s+", " ", found.group(1)).strip()[:70])
+        done = "; ".join(f"{c.get('name')}({args(c.get('arguments'))})" for c in lookup)
+        lines.append(f"- 최근에 한 조회: {done}" + (" → 결과: " + " / ".join(items) if items else ""))
+    if asked:
+        lines.append(f"- 직전에 사용자에게 물은 것: \"{asked}\"")
+    return ("(지금 대화의 흐름입니다. 사용자의 말을 이 흐름 안에서 이해하세요. '자세히', '그거', '그렇게 해줘', '좋아'처럼 "
+            "짧은 말은 대개 이 흐름을 잇는 말입니다.)\n" + "\n".join(lines))
 KNOWLEDGE_FILLER = "자료를 확인해 볼게요."
 WEEKDAY_NAMES = "월화수목금토일"
 
@@ -896,7 +971,10 @@ class KnowledgeClient:
         started = time.perf_counter()
         arguments = arguments if isinstance(arguments, dict) else {}
         try:
-            text, ok = await asyncio.wait_for(self.list_by_date(arguments.get("date"), tz), 4.0), True
+            if name == "search_knowledge":
+                text, ok = await asyncio.wait_for(self.search_text(arguments.get("query")), 4.0), True
+            else:
+                text, ok = await asyncio.wait_for(self.list_by_date(arguments.get("date"), tz), 4.0), True
         except ValueError as e:
             text, ok = str(e), False
         except asyncio.TimeoutError:
@@ -904,6 +982,16 @@ class KnowledgeClient:
         except Exception as e:
             text, ok = f"조회 실패: {type(e).__name__}", False
         return text, ok, (time.perf_counter() - started) * 1000
+
+    async def search_text(self, query, threshold=0.4):
+        """search_knowledge: the reference text for the model's own query, or a line saying there is none."""
+        query = str(query or "").strip()
+        if not query:
+            raise ValueError("검색어가 없습니다. 무엇을 찾을지 검색어를 정해 다시 호출하세요.")
+        hits, _ = await self.search(query)
+        block, _ = self.context(hits, threshold)
+        return block or (f"지식베이스에서 '{query}'와 관련된 자료를 찾지 못했습니다. 지식베이스에 없다고 말하고, "
+                         "필요하면 다른 도구를 쓰세요.")
 
     def context(self, hits, threshold):
         """Returns (prompt text, titles used) for the hits that score at least `threshold`."""
@@ -1080,6 +1168,9 @@ def create_app(args):
                     # knowledge: search the WeKnora knowledge base before each reply
                     # knowledge_threshold: rerank score a chunk needs to be put into the prompt
                     "knowledge": False, "knowledge_threshold": 0.4,
+                    # tool: the model calls search_knowledge when it needs it; before_reply: v1's search of the
+                    # user's words before every reply (a turn asking for the internet or news skips it in both)
+                    "knowledge_mode": "tool",
                     # language: "ko", "en", or "auto" (each turn in the language the user used)
                     "language": "ko",
                     # length: how long replies are, see REPLY_LENGTHS
@@ -1331,6 +1422,9 @@ def create_app(args):
             live = settings["tools"]
             # the knowledge base's own tool (documents by date) comes with the knowledge setting
             knowledge_specs = KNOWLEDGE_TOOL_SPECS if settings["knowledge"] and knowledge.available else []
+            if knowledge_specs and settings.get("knowledge_mode") == "tool" and not (
+                    ASKS_ELSEWHERE.search(user_message["content"] or "") and not ASKS_KNOWLEDGE.search(user_message["content"] or "")):
+                knowledge_specs = knowledge_specs + [SEARCH_KNOWLEDGE_SPEC]
             # the language of this reply: fixed by the setting, or (auto) the one the user just used
             language = settings["language"]
             if language not in LANGUAGES:
@@ -1352,6 +1446,13 @@ def create_app(args):
             today = datetime.now(toolbox.tz).date()
             clock = toolbox.clock()  # fixed for this reply, so its later passes reuse the prompt cache
             nudge = []  # a one-off correction, see LOOKUP_CLAIM; not kept in the history
+            # where the conversation stands, from the history before this question (situation_note)
+            cut = next((i for i, m in enumerate(history) if m is user_message), len(history))
+            try:
+                note = situation_note(history[:cut])
+            except Exception as e:
+                logger.warning(f"Situation note failed: {e!r}")
+                note = ""
 
             def llm_messages():
                 system = history[0]["content"]
@@ -1360,13 +1461,20 @@ def create_app(args):
                 system += "\n" + toolbox.context(can_call) if live else ""
                 if knowledge_specs and can_call:
                     system += "\n" + knowledge.guide(datetime.now(toolbox.tz), with_date=not live)
+                    if any(spec["function"]["name"] == "search_knowledge" for spec in knowledge_specs):
+                        system += (f" '{knowledge.name}' 지식베이스의 내용은 미리 찾아 주지 않습니다. 사용자가 지식베이스나 저장된 "
+                                   "자료를 원할 때, 또는 앞서 지식베이스에서 소개한 자료를 더 물을 때 search_knowledge를 부르세요. "
+                                   "검색어는 사용자의 말을 그대로 쓰지 말고 지금 이야기하는 주제로 정하세요. 뉴스, 인터넷, 최신 "
+                                   "소식을 원하면 지식베이스를 쓰지 말고 그에 맞는 도구를 쓰세요.")
                 if length_ko:
                     system += "\n" + (length_en if language == "en" else length_ko)
                 messages = [{"role": "system", "content": system}]
                 for message in history[1:]:
-                    if message is user_message and (live or reference):
+                    if message is user_message and (live or reference or note):
                         # the clock goes here, not in the system prompt: see Toolbox.context()
                         content = f"{reference}\n질문: {message['content']}" if reference else message["content"]
+                        if note:
+                            content = f"{note}\n{content}"
                         message = {**message, "content": f"{clock}\n{content}" if live else content}
                     if message is not reply:
                         messages.append(message)
@@ -1463,8 +1571,13 @@ def create_app(args):
                 started = time.perf_counter()
                 # "두 번째 글 더 자세히" points at the conversation, not at a topic: searched as it is, it
                 # matched an unrelated document (score 0.53) and the reply lost the thread
-                if settings["knowledge"] and knowledge.available and user_message["content"]:
-                    if BACK_REFERENCE.search(user_message["content"]):
+                mode = settings.get("knowledge_mode") or "before_reply"
+                if settings["knowledge"] and knowledge.available and user_message["content"] \
+                        and not knowledge_first(user_message["content"], mode):
+                    await out({"type": "knowledge", "id": request_id, "state": "skipped"})
+                    knowledge_memory["reference"] = ""
+                elif settings["knowledge"] and knowledge.available and user_message["content"]:
+                    if BACK_REFERENCE.search(user_message["content"]) and mode == "before_reply":
                         # ...so a follow-up ("그거 누가 만들었어?") keeps the material of the turn before
                         reference = knowledge_memory["reference"]
                         await out({"type": "knowledge", "id": request_id, "state": "reused", "has": bool(reference)})

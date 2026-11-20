@@ -282,6 +282,12 @@
       <label title="검색 결과의 관련도 점수가 이 값 이상일 때만 답변에 씁니다. 낮추면 더 자주 쓰고, 높이면 확실할 때만 씁니다.">기준
         <input type="number" id="knowledge-threshold" value="0.4" min="0" max="1" step="0.05" style="width:4.8em">
       </label>
+      <label title="필요할 때 찾기: 에이전트가 지식베이스가 필요하다고 볼 때 대화 맥락에 맞는 검색어로 찾습니다. 매번 미리 찾기: 말할 때마다 그 말로 먼저 찾아 답변 앞에 붙입니다(이전 방식). 둘 다 인터넷이나 뉴스를 찾아 달라는 말에는 지식베이스를 쓰지 않습니다.">찾는 방식
+        <select id="knowledge-mode">
+          <option value="tool" selected>필요할 때 찾기</option>
+          <option value="before_reply">매번 미리 찾기 (이전 방식)</option>
+        </select>
+      </label>
     </div>
   </div>
 
@@ -398,7 +404,7 @@ const TTS_SAMPLE = '안녕하세요. 지금 입력한 문장을 실시간으로 
 let chatBubbles = {};      // request id -> assistant bubble element
 // ---- backstage view: which stage is working, what was asked of whom, and what came back --------
 const SOURCE_OF = { get_weather: 'weather', search_news: 'news', get_news_detail: 'news',
-  search_geeknews: 'geeknews', read_geeknews: 'geeknews', search_wikipedia: 'wiki', list_knowledge_by_date: 'knowledge' };
+  search_geeknews: 'geeknews', read_geeknews: 'geeknews', search_wikipedia: 'wiki', list_knowledge_by_date: 'knowledge', search_knowledge: 'knowledge' };
 const SOURCE_LABEL = { knowledge: '지식베이스', weather: '날씨', news: '뉴스', geeknews: '긱뉴스', wiki: '위키백과' };
 const sec = ms => (ms / 1000).toFixed(2) + '초';
 
@@ -493,6 +499,9 @@ const Flow = {
     if (m.state === 'start') {
       this.source('knowledge', 'asking', '→ ' + m.query, '');
       this.log('out', '지식베이스에 검색 요청: ' + m.query);
+    } else if (m.state === 'skipped') {
+      this.source('knowledge', null, '', '');
+      this.log('step', '미리 찾지 않음: 필요하면 에이전트가 지식베이스를 직접 찾습니다');
     } else if (m.state === 'reused') {
       this.source('knowledge', m.has ? 'answered' : null, '→ 앞 질문에 이어지는 말', m.has ? '← 직전에 찾은 자료를 이어 씀' : '← 이어 쓸 자료 없음');
       this.log('step', m.has ? '앞 대화를 가리키는 말이라 직전에 찾은 자료를 이어 씀' : '앞 대화를 가리키는 말이라 새로 검색하지 않음');
@@ -708,6 +717,7 @@ function sendConfig() {
     stt: $('stt').value,
     knowledge: $('knowledge').checked,
     knowledge_threshold: parseFloat($('knowledge-threshold').value) || 0,
+    knowledge_mode: $('knowledge-mode').value,
   }));
 }
 
@@ -1139,7 +1149,7 @@ $('image').onchange = async e => {
 
 document.querySelectorAll('input[name=source]').forEach(el => { el.onchange = applySource; });
 $('speak').onclick = speak;
-['voice', 'model', 'barge', 'interrupt-mode', 'speculative', 'tools', 'knowledge', 'knowledge-threshold', 'language', 'length', 'endpoint', 'stt'].forEach(id => { $(id).onchange = sendConfig; });
+['voice', 'model', 'barge', 'interrupt-mode', 'speculative', 'tools', 'knowledge', 'knowledge-threshold', 'knowledge-mode', 'language', 'length', 'endpoint', 'stt'].forEach(id => { $(id).onchange = sendConfig; });
 $('clear').onclick = () => { if (ws && running) ws.send(JSON.stringify({ type: 'clear' })); };
 $('text').onkeydown = e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); speak(); }
