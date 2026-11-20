@@ -51,7 +51,31 @@ class NullRecorder:
 META_REPLY = re.compile(r"지시하신\s?대로|안내하신\s?대로|말씀하신\s?대로\s?도구|시스템\s?안내|도구를\s?호출|확인\s?문장을|"
                         r"^\s*(네[,.!]?\s*)?(알겠습니다|알겠어요|명심하겠|주의하겠|유의하겠)[.,!]?\s*(앞으로|다음부터|지시|말씀하신)")
 META_HOLD = 40      # characters of such a pass held back before any is spoken
-CARRY_S = 20.0     # a cut-off turn's words are put in front of the next one said within this many seconds
+CARRY_S = 20.0
+
+
+def _collect(data, found, depth=0):
+    """Every scalar a tool returned, by its key (the first one seen wins), nested dicts included."""
+    if not isinstance(data, dict) or depth > 3:
+        return
+    for key, value in data.items():
+        if isinstance(value, dict):
+            _collect(value, found, depth + 1)
+        elif isinstance(value, (str, int, float)) and key not in found:
+            found[key] = value
+
+
+def _fill(say, found):
+    """The opening words with {key} filled from what the opening tools returned ("{spoken}": list_mail's sentence
+    of how many mails and which matter). A sentence whose value is missing is left out."""
+    sentences = re.split(r"(?<=[.!?。])\s+", say)
+    kept = []
+    for sentence in sentences:
+        keys = re.findall(r"\{(\w+)\}", sentence)
+        if any(k not in found for k in keys):
+            continue
+        kept.append(re.sub(r"\{(\w+)\}", lambda m: str(found[m.group(1)]), sentence))
+    return " ".join(kept).strip()     # a cut-off turn's words are put in front of the next one said within this many seconds
 
 
 class _Turn:
@@ -994,6 +1018,7 @@ class Engine:
         entries.append(note)
         self.history.insert(0, note)
         unseen = False
+        found = {}          # values the opening tools returned, by key: fill the opening words' {placeholders}
         try:
             calls = [{"name": call.name, "arguments": dict(call.arguments)} for call in opening.tools]
             if calls:
@@ -1008,6 +1033,7 @@ class Engine:
                     if self._unseen(result):
                         text = (text + "\n" if text else "") + line("screen_unseen", language)
                         unseen = True
+                    _collect(getattr(result, "data", None), found)
                     exchange.append({"role": "tool", "tool_name": call["name"], "content": text})
                     yield self._tool_done(call, result, effect)
                     for event in self._display_events(state, result):
@@ -1015,6 +1041,8 @@ class Engine:
                 position = self._pinned()
                 self.history[position:position] = exchange
                 entries.extend(exchange)
+            if say and "{" in say:
+                say = _fill(say, found)
             if unseen and say:
                 # "읽지 않은 메일을 화면에 띄워 두었어요" on a page that shows no mail: keep only what is still true
                 kept = [s for s in re.split(r"(?<=[.!?。])\s+", say) if not re.search(r"화면|screen", s, re.I)]

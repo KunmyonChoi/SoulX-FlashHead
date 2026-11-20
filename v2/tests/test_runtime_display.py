@@ -298,3 +298,19 @@ async def test_the_opening_drops_its_screen_sentence_on_a_page_without_that_scre
     assert events[-1].text == "무엇을 드릴까요?"
     engine2, *_ = cafe([], definition=definition)
     assert (await gather(engine2.open()))[-1].text == "메뉴를 화면에 띄웠어요. 무엇을 드릴까요?"
+
+
+async def test_the_opening_words_are_filled_from_what_the_opening_tools_returned():
+    definition = make_cafe_definition()
+    definition = definition.model_copy(update={"opening": definition.opening.model_copy(
+        update={"say": "메뉴는 {missing_key}가지예요. 장바구니 상태: {status}. 무엇을 드릴까요?"})})
+    engine, llm, gateway, recorder = cafe([], definition=definition)
+    said = (await gather(engine.open()))[-1].text
+    assert "{" not in said and said.endswith("무엇을 드릴까요?") and "가지예요" not in said    # a missing value drops its sentence
+
+
+def test_fill_and_collect():
+    from agentkit.runtime.engine import _collect, _fill
+    found = {}
+    _collect({"listing": {"spoken": "읽지 않은 메일이 3통 있어요.", "rows": []}, "count": 3}, found)
+    assert _fill("{spoken} 무엇을 도와드릴까요?", found) == "읽지 않은 메일이 3통 있어요. 무엇을 도와드릴까요?"

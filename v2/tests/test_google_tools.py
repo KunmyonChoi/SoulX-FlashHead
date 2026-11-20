@@ -328,3 +328,19 @@ def test_spoken_dates_are_worked_out_in_code():
     for words, day in cases.items():
         assert google.day_from_words(words, friday) == day, words
     assert google.day_from_words("크리스마스", friday) is None
+
+
+async def test_lists_come_with_a_summary_that_can_be_said_without_the_screen(gateway):
+    unread = await gateway.call(ctx(1, session="g20"), "google.list_mail", {"filter": "unread"})
+    summary = next(line for line in unread.text.splitlines() if line.startswith("[말할 요약]"))
+    assert "읽지 않은 메일 3통" in summary and "의심스러운 메일: 3번 보안팀" in summary
+    assert summary.index("의심") < summary.index("답장이 필요해 보이는 메일: 1번 김민수")       # the risk first
+    assert "화면을 보지 않아도" in unread.text and "세 통씩" in unread.text
+    ads = await gateway.call(ctx(2, session="g20"), "google.list_mail", {"filter": "ads"})
+    assert "[말할 요약] 광고·알림 메일 2통. 보낸 곳: 쿠팡, 무신사." in ads.text
+    found = await gateway.call(ctx(3, session="g20"), "google.search_mail", {"query": "김민수"})
+    assert "[말할 요약] '김민수'로 찾은 메일 1통" in found.text
+
+
+def test_long_subjects_are_shortened_for_speech():
+    assert google._topic("Re: RE: [광고] 아주 긴 제목이 여기 있어서 말로 하기에는 너무 깁니다 정말로") == "아주 긴 제목이 여기 있어서 말로 하기에는…"

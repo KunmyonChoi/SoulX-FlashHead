@@ -1,0 +1,18 @@
+{
+  "agent_id": "office-assistant",
+  "version": 8,
+  "state": "tested",
+  "created_at": 1795184535.1786983,
+  "created_by": "claude",
+  "based_on": 7,
+  "note": "화면+말 설명 규칙, 날짜는 말한 그대로, 화면 없는 사용자·하나씩 읽기 시험",
+  "safety_change": false,
+  "changed_fields": [
+    "persona",
+    "flow",
+    "tests.personas"
+  ],
+  "test_run_id": "office-assistant.v8.20261120-232426-f8a3",
+  "approved_by": null,
+  "approved_at": null
+}
