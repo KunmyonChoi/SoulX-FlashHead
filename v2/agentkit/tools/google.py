@@ -12,6 +12,7 @@ Mail bodies go to the model inside markers that say the text is data, not instru
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import email.utils
 import html
@@ -301,12 +302,14 @@ class RealGoogle:
         if query:
             q.append(query)
         found = await self._call("GET", "/gmail/v1/users/me/messages", params={"q": " ".join(q), "maxResults": limit})
-        out = []
-        for item in found.get("messages", [])[:limit]:
-            meta = await self._call("GET", f"/gmail/v1/users/me/messages/{item['id']}", params={
-                "format": "metadata", "metadataHeaders": ["From", "To", "Subject", "Date", "Message-ID"]})
-            out.append(self._mail_meta(meta))
-        return out
+        # the headers of each mail, fetched side by side (one after another took 7.4 s for 16 mails)
+        gate = asyncio.Semaphore(6)
+
+        async def meta_of(item):
+            async with gate:
+                return self._mail_meta(await self._call("GET", f"/gmail/v1/users/me/messages/{item['id']}", params={
+                    "format": "metadata", "metadataHeaders": ["From", "To", "Subject", "Date", "Message-ID"]}))
+        return list(await asyncio.gather(*(meta_of(item) for item in found.get("messages", [])[:limit])))
 
     async def get_mail(self, mail_id):
         item = await self._call("GET", f"/gmail/v1/users/me/messages/{mail_id}", params={"format": "full"})
