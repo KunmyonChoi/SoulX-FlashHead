@@ -24,7 +24,8 @@ logger = logging.getLogger("agentkit.server")
 
 ROUTER_MODULES = ("agentkit.definition.api", "agentkit.tools.api", "agentkit.trace.api",
                   "agentkit.eval.api", "agentkit.builder.api", "agentkit.google_connect")
-PAGES = {"/": "index.html", "/monitor": "monitor.html", "/studio": "studio.html", "/connect": "connect.html"}
+PAGES = {"/": "index.html", "/monitor": "monitor.html", "/studio": "studio.html", "/connect": "connect.html",
+         "/office": "office.html"}   # office.html: the office assistant screen (prototype with sample data for now)
 CHANNELS = ("text", "voice", "avatar")
 OPENING_ID = "opening"   # the message id of the agent's opening words and screens
 
