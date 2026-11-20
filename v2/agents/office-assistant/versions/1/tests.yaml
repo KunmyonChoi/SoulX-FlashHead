@@ -1,0 +1,17 @@
+tests:
+  personas:
+    - id: check_schedule
+      description: 바쁜 팀장. 짧게 묻고 바로 끊는다.
+      goal: 내일 일정을 확인한다
+      facts: {}
+      opening: "내일 일정 좀 알려 줘."
+      max_turns: 4
+      expect: {no_invented_facts: true, task_done: true}
+    - id: add_meeting
+      description: 일정을 말로 잡으려는 팀장. 확인 질문에는 분명히 "네"라고 답한다.
+      goal: 내일 오후 3시에 영업팀 김민수 부장과 예산 회의 30분을 등록한다
+      facts: {attendee: "영업팀 김민수 부장"}
+      opening: "내일 오후 3시에 영업팀 김민수 부장이랑 예산 회의 30분 잡아 줘."
+      max_turns: 6
+      expect: {consent_before_execute: true, task_done: true}
+  cases: []

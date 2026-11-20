@@ -1,0 +1,21 @@
+# 항공: 대체편 찾기(조회). 같은 구간에서 그날 좌석이 남은 편과, 편마다 수수료와 차액의 합이 나온다.
+name: search_alternative_flights
+description: 예약을 옮길 수 있는 같은 구간의 항공편을 찾는다. 고객이 원하는 날짜를 말한 뒤에 호출한다. 대체편을 말하기 전에 반드시 호출한다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    booking_ref: {type: string, description: "예약번호"}
+    date: {type: string, description: "원하는 날짜. 2026-11-22 형식. 시스템 안내의 오늘 날짜와 예약의 출발일을 기준으로 계산한다"}
+    period: {type: string, enum: ["오전", "오후", "저녁"], description: "시간대. 고객이 말했을 때만 넣는다"}
+  required: [booking_ref, date]
+output_schema:
+  type: object
+  properties:
+    date: {type: string}
+    flights: {type: array, description: "[{flight_no, date, time, seats}]"}
+requires: [verified]
+timeout_s: 4.0
+retries: 1
+filler: "대체편을 찾아볼게요."
+adapter: {kind: python, target: "agentkit.dummy.airline:search_alternative_flights"}

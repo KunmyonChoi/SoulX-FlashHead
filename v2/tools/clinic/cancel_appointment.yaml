@@ -1,0 +1,23 @@
+# 의원: 예약 취소(변경 도구, 확인 필요).
+name: cancel_appointment
+description: 환자의 잡혀 있는 예약을 취소한다. 처음 호출하면 취소되지 않고 환자에게 읽어 줄 확인 문장이 돌아온다. 환자가 동의하면 같은 인자로 다시 호출한다.
+effect: write
+input_schema:
+  type: object
+  properties:
+    name: {type: string, description: "환자 이름"}
+    birth_date: {type: string, description: "생년월일. 예: 1991-06-20"}
+  required: [name, birth_date]
+output_schema:
+  type: object
+  properties:
+    appointment_id: {type: string}
+    cancelled: {type: boolean}
+confirm_template: "{name} 님의 {when} 예약을 취소할까요?"
+idempotency_fields: [name, birth_date]
+timeout_s: 4.0
+retries: 0
+pii_input: [name, birth_date]
+pii_output: []
+filler: "예약을 확인할게요."
+adapter: {kind: python, target: "agentkit.dummy.clinic:cancel_appointment", options: {preview: "agentkit.dummy.clinic:preview_cancel_appointment"}}

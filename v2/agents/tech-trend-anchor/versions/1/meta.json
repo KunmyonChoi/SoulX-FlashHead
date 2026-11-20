@@ -1,0 +1,14 @@
+{
+  "agent_id": "tech-trend-anchor",
+  "version": 1,
+  "state": "deployed",
+  "created_at": 1794905832.67,
+  "created_by": "wp1",
+  "based_on": null,
+  "note": "v1 아바타를 정의서로 옮김",
+  "safety_change": false,
+  "changed_fields": [],
+  "test_run_id": null,
+  "approved_by": "초기 등록(seed)",
+  "approved_at": 1794905832.67
+}

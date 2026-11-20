@@ -1,0 +1,23 @@
+# 드라이브스루: 주문서에 넣기(변경 도구). 확인 단계 없이 바로 들어간다(확정 전이라 되돌릴 수 있다).
+name: add_to_cart
+description: 메뉴를 주문서에 넣는다. 고객이 메뉴를 말하면 호출한다. 호출하면 바로 들어간다. 세트면 set을 true로 하고 drink에 음료를 넣는다. 고객이 세트의 음료를 말하지 않았으면 호출하기 전에 먼저 묻는다.
+effect: write
+input_schema:
+  type: object
+  properties:
+    item: {type: string, description: "메뉴 이름. 예: 불고기버거, 감자튀김, 콜라"}
+    quantity: {type: integer, description: "수량. 말하지 않았으면 1", minimum: 1, maximum: 30, default: 1}
+    set: {type: boolean, description: "세트로 주문하면 true (버거만 가능, 감자튀김과 음료가 붙는다)"}
+    drink: {type: string, description: "세트의 음료. 예: 콜라, 사이다"}
+    size: {type: string, enum: [regular, large], description: "감자튀김과 탄산음료 단품의 크기. large는 +700원"}
+  required: [item]
+output_schema:
+  type: object
+  properties:
+    added: {type: integer}
+    cart: {type: object, description: "넣은 뒤의 주문서. get_cart와 같은 모양"}
+idempotency_fields: []
+timeout_s: 4.0
+retries: 0
+filler: "네, 넣어 드릴게요."
+adapter: {kind: python, target: "agentkit.dummy.burger:add_to_cart"}

@@ -1,0 +1,21 @@
+guards:
+  - id: no_fake_change
+    kind: claims_lookup
+    pattern: "(변경|예약)\\S{0,2}\\s?(완료|됐|되었|해 드렸)"
+    unless_tools: [change_flight]
+    nudge: "(시스템 안내: change_flight를 호출하지 않고 변경이 끝난 것처럼 말하려 했습니다. 고객이 동의했다면 change_flight를 호출하세요.)"
+  - id: no_fake_lookup
+    kind: claims_lookup
+    pattern: "(확인|조회|찾아)\\S{0,2}\\s?(보니|봤더니|본 결과)"
+    unless_tools: [verify_booking, get_booking, search_alternative_flights, quote_change_fee]
+    nudge: "(시스템 안내: 조회하지 않고 조회한 것처럼 말하려 했습니다. 필요하면 도구를 호출하세요.)"
+  - id: no_waiver_promise
+    kind: regex
+    pattern: "(수수료|차액)\\S{0,2}\\s?(면제|없이|빼)\\S*\\s?(해 드리|드릴)"
+    nudge: "(시스템 안내: 수수료 면제를 약속하지 마세요. quote_change_fee의 결과만 전하세요.)"
+  # 변경 전 확인을 도구(change_flight) 없이 스스로 묻는 것: 동의가 게이트웨이에 남지 않아 두 번 묻게 된다
+  - id: confirm_through_tool
+    kind: claims_lookup
+    pattern: "(변경(해 드릴|할|을 진행할)까요|이대로\\s?(변경|진행)|진행할까요|바꿔\\s?드릴까요)"
+    unless_tools: [change_flight]
+    nudge: "(시스템 안내: 변경 전 확인을 직접 물으려 했습니다. 확인 문장은 change_flight 도구가 만듭니다. 지금 고객이 고른 편명과 날짜로 change_flight를 호출하고, 받은 확인 문장을 그대로 읽으세요.)"

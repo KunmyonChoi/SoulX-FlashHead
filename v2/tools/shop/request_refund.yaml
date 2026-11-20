@@ -1,0 +1,30 @@
+# 쇼핑몰: 환불 접수(변경 도구). 처음 호출하면 확인 문장만 돌아오고, 고객이 다음 말에서 동의한 뒤
+# 같은 인자로 다시 호출해야 접수된다. 상품명과 금액은 더미 쇼핑몰의 미리보기가 채운다.
+name: request_refund
+description: 주문의 환불을 접수한다. 고객이 환불을 요청했을 때 사용한다. 처음 호출하면 접수되지 않고 고객에게 읽어 줄 확인 문장(상품명과 금액)이 돌아온다. 고객이 그 문장에 동의하면 다음 턴에 같은 인자로 다시 호출해야 접수된다.
+effect: write
+input_schema:
+  type: object
+  properties:
+    order_id: {type: string, description: "주문번호. 예: A1001"}
+    reason: {type: string, description: "환불 사유. 고객이 말한 대로 짧게. 예: 단순 변심, 상품 불량"}
+  required: [order_id, reason]
+output_schema:
+  type: object
+  properties:
+    refund_id: {type: string}
+    order_id: {type: string}
+    product_name: {type: string}
+    amount: {type: integer, description: "환불 금액(원)"}
+    reason: {type: string}
+    status: {type: string}
+    requested_at: {type: string}
+confirm_template: "{product_name} {amount}원 환불을 접수할까요?"
+idempotency_fields: [order_id]
+requires: [verified]
+timeout_s: 4.0
+retries: 0
+pii_input: []
+pii_output: [customer_name, address]
+filler: "환불을 접수하고 있어요."
+adapter: {kind: dummy, target: "shop:request_refund"}

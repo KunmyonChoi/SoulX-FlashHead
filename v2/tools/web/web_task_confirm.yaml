@@ -1,0 +1,21 @@
+# 비서: 웹 작업이 멈춰 선 되돌릴 수 없는 단추(일정 등록, 메일 보내기)를 실제로 누른다. 변경 도구, 고객 동의 필요(두 단계).
+# 처음 호출하면 확인 문장만 나오고, 사용자가 다음 말에서 동의한 뒤 같은 task_id로 다시 호출해야 눌린다.
+# {summary}는 브라우저 조작 서비스의 미리보기가 채운다("제목 예산 회의, 날짜 ... 내용으로 일정 등록을").
+name: web_task_confirm
+description: web_task가 실행 전 확인이 필요하다고 한 일을 실제로 실행한다. task_id는 web_task 결과에 적힌 값을 그대로 쓴다. 처음 호출하면 실행되지 않고 사용자에게 읽어 줄 확인 문장이 돌아온다. 사용자가 동의하면 다음 턴에 같은 task_id로 다시 호출해야 실행된다.
+effect: write
+input_schema:
+  type: object
+  properties:
+    task_id: {type: string, description: "web_task 결과에 적힌 task_id. 예: g3"}
+  required: [task_id]
+output_schema:
+  type: object
+  properties:
+    status: {type: string}
+confirm_template: "{summary} 진행할까요?"
+idempotency_fields: [task_id]
+timeout_s: 20.0
+retries: 0
+filler: "잠시만요."
+adapter: {kind: http, target: "http://127.0.0.1:7895/confirm", options: {preview_url: "http://127.0.0.1:7895/confirm_preview", allow_in_test: true}}

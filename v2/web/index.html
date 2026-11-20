@@ -1,0 +1,1484 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>대화 · 음성 에이전트</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/web/app.css?v=screen7e">
+</head>
+<body class="page-talk">
+<header class="bar">
+  <div class="brand">음성 에이전트</div>
+  <nav class="nav" id="nav" aria-label="화면"></nav>
+  <label class="bar-field">에이전트 <select id="agent" disabled></select></label>
+  <label class="bar-field" title="비워 두면 지금 배포된 버전이 대화를 받습니다.">버전 <select id="version" disabled></select></label>
+  <div class="modes" role="radiogroup" aria-label="채널">
+    <label><input type="radio" name="channel" value="text" checked> 글</label>
+    <label><input type="radio" name="channel" value="voice"> 음성</label>
+    <label id="avatar-option"><input type="radio" name="channel" value="avatar"> 아바타</label>
+  </div>
+  <label class="bar-field" id="test-label" title="켜면 이 대화의 글과 음성이 저장됩니다. 모니터에서 다시 듣고, 잘못 알아들은 말을 골라 음성 인식을 고치는 데 씁니다. 끄면 음성은 저장되지 않습니다.">
+    <input type="checkbox" id="test"> 녹음해서 품질 개선에 쓰기</label>
+  <div class="bar-right">
+    <span class="engine" id="engine" hidden>
+      <span class="engine-state" id="engine-state" role="status">엔진 확인 중</span>
+      <button id="engine-warm" class="ghost small" title="음성 인식과 아바타 영상 엔진을 미리 올립니다. 아바타 영상 엔진은 45초쯤 걸립니다. 준비해 두면 대화가 바로 시작됩니다." hidden>엔진 준비</button>
+      <button id="engine-unload" class="ghost small" title="엔진을 내려 GPU 메모리를 돌려줍니다. 다음에 쓸 때 다시 올라옵니다." hidden>내리기</button>
+    </span>
+    <span class="state" id="s-state">대기</span>
+    <button id="restart" class="ghost" title="지금 대화와 주문을 버리고 처음 화면에서 새로 시작합니다." disabled>처음부터</button>
+    <button id="toggle" disabled>대화 시작</button>
+    <button id="open-settings" class="ghost" aria-haspopup="dialog" hidden>음성 설정</button>
+    <button id="open-backstage" class="ghost small" aria-pressed="false" title="개발자용: 답변이 만들어지는 과정과 시간 기록을 화면 아래에 엽니다." hidden>무대 뒤 보기</button>
+  </div>
+</header>
+<div class="recording" id="recording" role="status" hidden>
+  <span><b>이 대화를 녹음해 기록하고 있습니다.</b> 글과 음성이 저장되어 모니터에서 다시 들을 수 있고, 음성 인식 품질을 고치는 데 쓰입니다.</span>
+</div>
+<div id="message" role="status"></div>
+
+<main class="stage no-avatar" id="stage">
+  <section class="menu-panel" id="menu-panel" aria-label="메뉴" hidden>
+    <header class="menu-head"><h2>메뉴</h2><nav class="cats" id="menu-cats" aria-label="메뉴 종류"></nav></header>
+    <div class="kiosk-notes" id="kiosk-notes" aria-live="polite"></div>
+    <div class="menu-scroll" id="menu-scroll"><div id="menu-list"></div></div>
+    <div class="spot" id="spot" aria-live="polite" hidden></div>
+  </section>
+
+  <section class="onair" aria-label="대화">
+    <div class="monitor" id="avatar-box" hidden>
+      <canvas id="canvas" width="512" height="512"></canvas>
+      <div class="meter" title="마이크 입력 레벨"><div class="level"></div></div>
+    </div>
+    <div class="voicebar" id="voicebar" hidden>
+      <span class="what" id="listen-label">마이크 꺼짐</span>
+      <div class="meter" title="마이크 입력 레벨"><div class="level"></div></div>
+      <span class="hint">말로 하거나 아래에 글로 입력해도 됩니다. 영상 없이 소리로만 답합니다.</span>
+    </div>
+    <div class="talk">
+      <div id="chat-log" aria-live="polite"></div>
+      <div class="composer">
+        <textarea id="text" aria-label="보낼 내용" placeholder="대화를 시작하면 여기에 입력할 수 있습니다." title="Enter로 전송, Shift+Enter로 줄바꿈" disabled></textarea>
+        <button id="send" disabled>보내기</button>
+        <button id="clear" class="ghost" title="에이전트가 말하는 것을 멈춥니다" hidden disabled>말 멈추기</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="order-panel" id="order-panel" aria-label="주문 내역" hidden>
+    <header><h2>주문 내역</h2><span id="order-count"></span><span class="spacer"></span>
+      <button class="ghost small only-sheet" id="order-close">닫기</button></header>
+    <ol id="order-lines"></ol>
+    <dl class="order-sums" id="order-sums"></dl>
+  </section>
+
+  <section class="backstage" aria-label="무대 뒤">
+    <div class="panel">
+      <h2>무대 뒤에서 일어나는 일 <small id="flow-caption"></small></h2>
+      <div class="legend"><span class="l-out">요청이 나가는 중</span><span class="l-back">결과가 돌아옴</span>
+        <span class="l-wait">고객 동의를 기다림</span><span class="l-live">고객에게 나가는 중</span></div>
+      <ol class="path" id="path"></ol>
+      <div class="sources-wrap" id="sources-wrap"><div class="sources" id="sources" hidden></div></div>
+    </div>
+    <div class="panel trace-panel">
+      <h2>이번 대화의 기록 <small>질문 시점부터 흐른 시간</small></h2>
+      <ol id="trace"></ol>
+    </div>
+    <dl class="stats">
+      <div><dt id="s-delay-label">보낸 뒤 답이 보이기까지</dt><dd id="s-delay">-</dd></div>
+      <div><dt>세션</dt><dd id="s-session">-</dd></div>
+      <div id="s-audio-box" hidden><dt>받은 음성</dt><dd id="s-audio">-</dd></div>
+    </dl>
+  </section>
+</main>
+
+<button class="order-bar" id="order-bar" aria-haspopup="dialog" hidden></button>
+<div class="kscrim" id="kscrim" hidden></div>
+<div class="picker" id="picker" role="dialog" aria-modal="true" aria-labelledby="picker-title" hidden></div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="settings" role="dialog" aria-label="음성 설정" hidden>
+  <header><h2>음성 설정</h2><button id="close-settings" class="ghost">닫기</button></header>
+  <p class="muted" style="font-size:13px">정의서에 적힌 값에서 시작합니다. 여기서 바꾼 값은 이 대화에만 적용됩니다.</p>
+  <h3>듣기</h3>
+  <div class="row"><label>음성 인식 모델
+    <select id="stt"><option value="whisper">Whisper large-v3-turbo</option><option value="qwen">Qwen3-ASR-1.7B</option></select></label></div>
+  <div class="row"><label title="Smart Turn은 억양으로 말이 끝났는지 추정합니다.">말 끝 판단
+    <select id="endpoint"><option value="silence">고정 (0.7초 조용하면 끝)</option><option value="smart">Smart Turn (억양으로 판단)</option></select></label></div>
+  <div class="row"><label><input type="checkbox" id="barge"> 에이전트가 말하는 중에도 듣기 (헤드폰 필요)</label></div>
+  <div class="row"><label title="조회 도구만 미리 실행합니다. 변경 도구는 말이 확정된 뒤에만 실행됩니다."><input type="checkbox" id="speculative"> 말이 끝나기 전에 답을 미리 준비</label></div>
+  <h3>끼어들기</h3>
+  <div class="row"><label>처리 방식
+    <select id="interrupt-mode">
+      <option value="basic">기본 (보낸 음성은 끝까지 재생)</option>
+      <option value="unmute">즉시 끊고, 들은 만큼만 기억</option>
+      <option value="unmute_gate">즉시 끊되, 짧은 맞장구에는 끊지 않음</option>
+    </select></label></div>
+</aside>
+
+<script src="/web/common.js?v=screen8"></script>
+<script>
+'use strict';
+const SR = 16000;
+const PACKET = 1600; // 100 ms
+const canvas = $('canvas'), g = canvas.getContext('2d');
+
+const workletSource = `
+class Capture extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Int16Array(${PACKET}); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (ch) {
+      for (let i = 0; i < ch.length; i++) {
+        const s = Math.max(-1, Math.min(1, ch[i]));
+        this.buf[this.n++] = s < 0 ? s * 32768 : s * 32767;
+        if (this.n === this.buf.length) {
+          const out = this.buf.slice();
+          this.port.postMessage(out.buffer, [out.buffer]);
+          this.n = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('capture', Capture);`;
+
+let ctx = null, ws = null, mic = null, monitorGain = null;
+let cfg = null, running = false, channel = 'text', handedOff = false;
+let playHead = 0;          // ctx time at which the next chunk should start
+let frames = [];           // {t, bitmap}, sorted by t
+let chain = Promise.resolve();
+let scheduled = [];        // audio chunks handed to WebAudio: {seq, node, t0, duration}
+let outputGain = null;     // gain shared by the chunks scheduled since the last flush
+let minSeq = 0;            // chunks below this were made obsolete by an interrupt
+let sentAt = {};           // request id -> performance.now() (text) at which the text was sent
+let speakTimes = {};       // request id -> ctx time at which the text was sent (voice, avatar)
+let speechStarts = {};     // chunk seq -> "speech" notices waiting for that chunk
+let toolLines = {};        // request id + tool call -> the chat line that shows the call
+let chatBubbles = {};      // request id -> assistant bubble element
+let pendingConfirm = {};   // tool name -> the card waiting for the customer's consent
+let nextRequestId = 1;
+let audioChunks = 0, audioSeconds = 0;
+let lastError = '';        // what the server said just before closing the connection
+let userTurns = 0;         // customer turns so far in this session: the turn number when the server does not send one
+let heardTurns = {};       // request id -> {turn, wrap, control} of a bubble that came from speech recognition
+let recorded = false;      // this session is stored with its audio (test=1)
+
+let agents = [], definition = null, toolContracts = null;   // toolContracts: name -> ToolContract (null: not loaded)
+let toolPacks = null;                                       // the packs toolContracts was loaded for ("cafe,common")
+let agentLoad = 0, stableVersion = null;
+let registeredTools = null;   // Set of tool names the server has contracts for (null: unknown)
+let blocked = '';             // why a conversation with the chosen agent cannot be started ('' = it can)
+
+// ---- backstage view: which stage is working, what was asked of whom, and what came back --------
+const NODES = {
+  text: [['llm', '답변 생성'], ['out', '글 표시']],
+  voice: [['listen', '듣기'], ['stt', '음성 인식'], ['llm', '답변 생성'], ['tts', '음성 합성'], ['out', '소리 재생']],
+  avatar: [['listen', '듣기'], ['stt', '음성 인식'], ['llm', '답변 생성'], ['tts', '음성 합성'], ['out', '영상 생성']],
+};
+
+const Flow = {
+  t0: null,          // performance.now() at which the current question was complete
+  pendingEnd: null,  // an end-of-turn judgement that arrived before its transcript
+  lanes: {},         // key -> lane element. "knowledge" plus one per tool of the agent
+
+  buildPath() {
+    const list = NODES[channel];
+    setKids($('path'), ...list.map(([id, name], i) => el('li', { class: 'node' + (i === list.length - 1 ? ' last' : '') + (id === 'llm' ? ' hub' : ''), id: 'n-' + id },
+      el('div', { class: 'dot' }), el('div', { class: 'name' }, name), el('div', { class: 'val' }))));
+    videoState = null;
+    placeLanes();
+  },
+
+  // The lanes come from the agent's definition: its knowledge base, then every tool it may call.
+  buildLanes() {
+    this.lanes = {};
+    const box = $('sources');
+    box.replaceChildren();
+    if (!definition) { box.hidden = true; return; }
+    requestAnimationFrame(placeLanes);
+    const hasKnowledge = definition.knowledge && definition.knowledge.kind && definition.knowledge.kind !== 'none';
+    const tools = definition.tools || [];
+    box.hidden = false;
+    if (!hasKnowledge && !tools.length) {
+      box.append(el('p', {}, '이 에이전트는 찾아보는 곳이 없습니다. 도구와 지식 없이 답합니다.'));
+      return;
+    }
+    box.append(el('p', {}, '답변 생성이 찾아보거나 처리를 맡기는 곳'));
+    if (hasKnowledge) this.addLane('knowledge', definition.knowledge.name || '지식베이스', '지식 검색', '답하기 전에 매번 검색합니다', false);
+    tools.forEach(name => {
+      const c = toolContracts && toolContracts[name];
+      this.addLane(name, name, c ? (c.effect === 'write' ? '변경' : '조회') : '도구', c ? c.description : '', c && c.effect === 'write');
+    });
+  },
+
+  addLane(key, name, kindLabel, description, write) {
+    const lane = el('div', { class: 'src' + (write ? ' write' : ''), id: 'src-' + key, title: description || '' },
+      el('div', { class: 'wire' }, el('i')),
+      el('div', { class: 'who' }, el('span', { class: 'nm' }, name),
+        el('small', {}, el('b', {}, kindLabel), description ? ' · ' + description : '')),
+      el('div', { class: 'io' }, el('div', { class: 'ask' }), el('div', { class: 'ans' })));
+    $('sources').append(lane);
+    this.lanes[key] = lane;
+    return lane;
+  },
+
+  node(id, state, value) {
+    const node = $('n-' + id);
+    if (!node) return;
+    node.classList.remove('active', 'done', 'live', 'working');
+    if (state) node.classList.add(state);
+    if (value !== undefined) node.querySelector('.val').textContent = value;
+  },
+
+  source(key, state, ask, answer) {
+    const lane = this.lanes[key] || this.addLane(key, key, '도구', '', false);  // a tool the definition did not list
+    lane.classList.remove('asking', 'answered', 'failed', 'waiting');
+    if (state) { void lane.offsetWidth; lane.classList.add(state); }  // restart the animation
+    if (ask !== undefined) lane.querySelector('.ask').textContent = ask;
+    if (answer !== undefined) lane.querySelector('.ans').textContent = answer;
+    if (state === 'asking' || state === 'waiting') lane.scrollIntoView({ block: 'nearest' });
+  },
+
+  log(kind, text, detail) {
+    const t = this.t0 === null ? '' : '+' + ((performance.now() - this.t0) / 1000).toFixed(2) + '초';
+    const what = el('div', { class: 'what' }, text);
+    if (detail) what.append(el('details', {}, el('summary', {}, '돌아온 내용 보기'), el('pre', {}, detail)));
+    this.append(el('li', { class: kind }, el('time', {}, t), el('span', { class: 'mark' }), what));
+  },
+
+  append(li) {
+    const list = $('trace'), atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    list.append(li);
+    while (list.children.length > 200) list.firstChild.remove();
+    if (atEnd) list.scrollTop = list.scrollHeight;
+  },
+
+  // A new question: clear what the last one lit up. A lane waiting for consent stays lit until it is resolved.
+  turn(text, agoMs) {
+    this.t0 = performance.now() - (agoMs || 0);
+    Object.entries(this.lanes).forEach(([key, lane]) => { if (!lane.classList.contains('waiting')) this.source(key, null, '', ''); });
+    (channel === 'avatar' ? ['llm', 'tts'] : ['llm', 'tts', 'out']).forEach(id => this.node(id, null, ''));   // the avatar's last node follows the video itself
+    this.append(el('li', { class: 'asked' }, '고객: ' + text));
+  },
+
+  reset() {
+    this.t0 = null; this.pendingEnd = null;
+    this.buildPath();
+    Object.keys(this.lanes).forEach(key => this.source(key, null, '', ''));
+  },
+
+  listening(state) {
+    this.node('listen', state === 'hearing' ? 'active' : null,
+      { listening: '기다리는 중', hearing: '말소리 감지', transcribing: '말이 끝남', speaking: '에이전트가 말하는 중' }[state] || '');
+    if (state === 'transcribing') this.node('stt', 'active', '글자로 바꾸는 중');
+  },
+
+  transcript(m) {
+    this.turn(m.text, m.stt_ms);
+    this.node('stt', 'done', m.stt_ms != null ? sec(m.stt_ms) : '');
+    if (this.pendingEnd) {
+      this.log('step', '말 끝 판단: 끝났을 확률 ' + this.pendingEnd.probability.toFixed(2) + ', '
+        + this.pendingEnd.silence.toFixed(2) + '초 기다린 뒤 확정');
+      this.pendingEnd = null;
+    }
+    this.log('back', '음성 인식 ' + (m.engine === 'qwen' ? '(Qwen3-ASR) ' : m.engine === 'whisper' ? '(Whisper) ' : '')
+      + (m.stt_ms != null ? sec(m.stt_ms) : '')
+      + (m.language ? ' (' + (m.language === 'en' ? '영어' : '한국어') + ')' : '')
+      + (m.speculative ? ', 미리 준비해 둔 답을 사용' : ''));
+  },
+
+  knowledge(m) {
+    const top = typeof m.top === 'number' ? m.top.toFixed(2) : '-';
+    const sources = m.sources || [];
+    if (m.state === 'start') {
+      this.source('knowledge', 'asking', '→ ' + (m.query || ''), '');
+      this.log('out', '지식베이스에 검색 요청: ' + (m.query || ''));
+    } else if (m.state === 'reused') {
+      this.source('knowledge', m.has ? 'answered' : null, '→ 앞 질문에 이어지는 말', m.has ? '← 직전에 찾은 자료를 이어 씀' : '← 이어 쓸 자료 없음');
+      this.log('step', m.has ? '앞 대화를 가리키는 말이라 직전에 찾은 자료를 이어 씀' : '앞 대화를 가리키는 말이라 새로 검색하지 않음');
+    } else if (m.ok === false) {
+      this.source('knowledge', 'failed', undefined, '← 실패: ' + (m.message || ''));
+      this.log('bad', '지식 검색 실패 (' + (m.message || '') + '), 자료 없이 답변');
+    } else {
+      const used = sources.length;
+      this.source('knowledge', 'answered', undefined,
+        used ? '← 문서 ' + used + '건 사용 · 최고 ' + top + ' · ' + sec(m.ms) : '← 쓸 만한 자료 없음 · 최고 ' + top + ' · ' + sec(m.ms));
+      this.log('back', used ? '지식베이스 응답 ' + sec(m.ms) + ': 관련도 ' + top + ', 문서 ' + used + '건을 프롬프트에 첨부'
+        : '지식베이스 응답 ' + sec(m.ms) + ': 최고 관련도 ' + top + '가 기준'
+          + (typeof m.threshold === 'number' ? ' ' + m.threshold.toFixed(2) : '') + '에 못 미쳐 쓰지 않음',
+        used ? sources.join('\n') : null);
+    }
+  },
+
+  llm(m) {
+    if (m.state === 'start') {
+      this.node('llm', 'active', (m.model || '') + (m.round > 1 ? ' · ' + m.round + '번째' : ''));
+      this.log('out', m.round > 1 ? '도구 결과를 넣어 답변을 다시 생성 (' + m.round + '번째)'
+        : '답변 생성 시작: ' + (m.model || '') + (m.tools ? ', 쓸 수 있는 도구 ' + m.tools + '개' : ''));
+    } else if (m.state === 'first_token') {
+      this.node('llm', 'active', '첫 글자 ' + sec(m.ms));
+    } else if (m.state === 'done') {
+      this.node('llm', 'done', (m.chars != null ? m.chars + '자 · ' : '') + sec(m.ms));
+      this.log('back', '답변 생성 끝: ' + (m.chars != null ? m.chars + '자, ' : '') + sec(m.ms));
+    }
+  },
+
+  tool(m) {
+    const what = argsText(m.arguments), write = isWrite(m);
+    const first = String(m.result || '').split('\n')[0];
+    const brief = (m.items ? '항목 ' + m.items + '건: ' : '') + first.replace(/:$/, '');
+    if (m.state === 'start') {
+      this.source(m.name, 'asking', '→ ' + what, '');
+      this.log('out', m.name + (write ? ' 에 변경 요청: ' : ' 에 조회 요청: ') + what);
+    } else if (m.state === 'cancelled') {
+      this.source(m.name, 'failed', undefined, '← 취소됨');
+      this.log('bad', m.name + ' 호출이 취소됨 (말이 끊김)');
+    } else if (m.needs_confirmation) {
+      this.source(m.name, 'waiting', '→ ' + what, '← 실행 전, 고객 동의를 기다리는 중');
+      this.log('wait', m.name + ': 아직 실행하지 않음. 고객에게 확인 문장을 읽고 동의를 기다림', m.confirmation_text || m.result);
+    } else if (m.ok === false) {
+      const why = ERROR_LABEL[m.error_type] ? ERROR_LABEL[m.error_type] + ': ' : '';
+      this.source(m.name, 'failed', '→ ' + what, '← ' + why + brief + ' · ' + sec(m.ms));
+      this.log('bad', m.name + ' 실패 ' + sec(m.ms) + ': ' + why + brief);
+    } else {
+      const done = write ? (m.executed ? '실행됨: ' : '이미 처리된 요청이라 다시 실행하지 않음: ') : '';
+      this.source(m.name, 'answered', '→ ' + what, '← ' + done + brief + ' · ' + sec(m.ms));
+      this.log('back', m.name + (write && m.executed ? ' 실행 ' : ' 응답 ') + sec(m.ms) + ': ' + done + brief, m.result);
+    }
+  },
+
+  tts(m) {
+    if (m.state === 'start') {
+      this.node('tts', 'active', (m.filler ? '추임새 ' : '') + m.chars + '자 합성 중');
+    } else {
+      this.node('tts', 'done', m.seconds.toFixed(1) + '초 분량 · ' + sec(m.ms));
+      this.log('step', (m.filler ? '추임새 준비: ' : '음성 합성: ') + m.seconds.toFixed(1) + '초 분량을 ' + sec(m.ms) + '에');
+    }
+  },
+
+  onAir(mark, delay) {
+    if (channel !== 'avatar') {   // on the avatar channel paintVideoNode() lights the node for as long as speech is playing
+      this.node('out', 'live');
+      clearTimeout(this.liveTimer);
+      this.liveTimer = setTimeout(() => this.node('out', null), 2500);
+    }
+    const where = channel === 'text' ? '화면에 표시됨' : channel === 'voice' ? '소리로 나감' : '화면에 나감';
+    const kind = mark.phase === 'filler' ? '추임새가 ' : mark.phase === 'answer' ? '도구 결과를 넣은 답이 ' : '답변이 ';
+    this.log('live', kind + where + (delay != null ? ': 질문이 끝나고 ' + delay.toFixed(2) + '초' : ''));
+  },
+};
+
+// The lanes belong to "답변 생성": the stem starts at that node's dot, wherever the node is in this channel and at this width.
+// When there is room to its right the whole block hangs straight under it; otherwise the block keeps the full width
+// and a rail joins it to the stem.
+function placeLanes() {
+  const wrap = $('sources-wrap'), dotNode = document.querySelector('#n-llm .dot');
+  if (!wrap || !dotNode || $('sources').hidden) return;
+  const panel = wrap.parentNode, style = getComputedStyle(panel), box = panel.getBoundingClientRect();
+  const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+  const right = box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+  const dot = dotNode.getBoundingClientRect(), x = dot.left + dot.width / 2;
+  const straight = right - x >= 380;
+  const edge = straight ? x - 1 : left + 7;                 // left edge of the block's 2px rail
+  wrap.style.marginLeft = (edge - left).toFixed(1) + 'px';
+  wrap.style.setProperty('--stem-left', (x - 1 - (edge + 2)).toFixed(1) + 'px');
+  wrap.style.setProperty('--rail-w', (x + 1 - edge).toFixed(1) + 'px');
+  wrap.style.setProperty('--stem-h', Math.max(0, wrap.getBoundingClientRect().top - dot.bottom).toFixed(1) + 'px');
+  wrap.dataset.hang = straight ? 'straight' : 'rail';
+}
+
+// Avatar channel: the last node shows the video being made. Amber while chunks keep arriving (with the time one chunk
+// took to generate), red while a chunk that carries speech is on screen.
+let videoState = null, videoChunkAt = 0, videoInferMs = null, speechSpans = [];
+function noteVideoChunk(t0, duration, pcm, inferMs) {
+  videoChunkAt = performance.now(); videoInferMs = inferMs;
+  let loud = false;
+  for (let i = 0; i < pcm.length; i += 16) if (pcm[i] > 300 || pcm[i] < -300) { loud = true; break; }
+  if (loud) speechSpans.push({ t0, t1: t0 + duration });
+}
+function paintVideoNode() {
+  if (channel !== 'avatar' || !running || !ctx) return;
+  const now = ctx.currentTime;
+  speechSpans = speechSpans.filter(s => s.t1 > now);
+  const state = speechSpans.some(s => s.t0 <= now) ? 'live' : videoChunkAt && performance.now() - videoChunkAt < 1500 ? 'working' : null;
+  const cost = videoInferMs > 0 ? '청크당 ' + Math.round(videoInferMs) + 'ms' : '';
+  const key = state + '|' + cost;
+  if (key === videoState) return;
+  videoState = key;
+  Flow.node('out', state, state === 'live' ? '말하는 영상 나가는 중' + (cost ? ' · ' + cost : '') : state ? '만드는 중' + (cost ? ' · ' + cost : '') : '');
+}
+
+const isWrite = m => m.effect ? m.effect === 'write' : !!(toolContracts && toolContracts[m.name] && toolContracts[m.name].effect === 'write');
+function argsText(args) {
+  const parts = Object.entries(args || {}).map(([k, v]) => k + ' ' + (typeof v === 'string' ? v : JSON.stringify(v)));
+  const text = parts.join(', ');
+  return text.length > 90 ? text.slice(0, 90) + '…' : (text || '인자 없음');
+}
+
+// ---- the customer's screen (docs/DISPLAY.md): menu, order, confirm and receipt cards ------------
+// Everything here is drawn from `display` payloads, which carry the system's own values. What the agent says
+// never changes it. Open only for agents whose `ready.screen.panels` is not empty.
+const Screen = {
+  on: false,            // this agent has a screen
+  cards: false,         // confirm and receipt cards have a place (the menu area)
+  actions: new Set(),   // names from ready.actions: what a touch may do
+  menu: null, found: null, cart: null, confirmTool: null, picking: false,
+  category: null,       // the kind of menu shown (a category id), null: all
+  asked: false,         // the tool of the confirm card was called during the current customer turn
+
+  apply(panels, actions) {
+    panels = panels || [];
+    const menu = panels.includes('menu'), cart = panels.includes('cart'), stage = $('stage');
+    this.on = panels.length > 0;
+    this.cards = menu;
+    this.actions = new Set((actions || []).map(a => a.name));
+    document.body.classList.toggle('has-screen', this.on);
+    document.body.classList.toggle('has-order-bar', cart);
+    stage.classList.toggle('kiosk', this.on); stage.classList.toggle('has-menu', menu); stage.classList.toggle('has-cart', cart);
+    $('menu-panel').hidden = !menu; $('order-panel').hidden = !cart; $('order-bar').hidden = !cart;
+    $('open-backstage').hidden = !this.on;
+    if (!this.on) this.dock(false);
+    requestAnimationFrame(placeLanes);
+  },
+
+  // a new session, or another agent: nothing has been shown yet
+  clear() {
+    this.menu = null; this.found = null; this.cart = null; this.confirmTool = null; this.category = null;
+    this.closePicker(); this.sheet(false);
+    $('spot').hidden = true; $('spot').replaceChildren(); $('menu-panel').classList.remove('locked');
+    $('kiosk-notes').replaceChildren();
+    this.drawMenu(); this.drawCart(); this.freeze();
+  },
+
+  can(name) { return this.actions.has(name); },
+  live() { return running && !!cfg && !handedOff; },
+  // touches only count while the conversation is open
+  freeze() {
+    $('menu-panel').classList.toggle('frozen', !this.live());
+    document.querySelectorAll('#order-lines .rm').forEach(b => { b.disabled = !this.live(); });
+  },
+
+  // the backstage view and the timed record: a dock for developers, closed until asked for
+  dock(open) {
+    document.body.classList.toggle('backstage-open', open);
+    $('open-backstage').setAttribute('aria-pressed', String(open));
+    $('open-backstage').textContent = open ? '무대 뒤 닫기' : '무대 뒤 보기';
+    if (open) requestAnimationFrame(placeLanes);
+  },
+
+  show(m) {
+    const data = m.data || {}, words = displayText(m.kind, data);
+    Flow.log('step', '화면에 표시 (' + (DISPLAY_LABEL[m.kind] || m.kind) + '): ' + words.summary, words.lines.join('\n') || null);
+    if (!this.on) return;
+    if (m.kind === 'menu') { this.menu = data; this.drawMenu(); }
+    else if (m.kind === 'items') {
+      this.found = { query: data.query || '', items: data.items || [] };
+      // no menu on screen yet: the found items are all there is to show
+      if (!this.menu || this.menu.fromItems) { this.menu = { fromItems: true, categories: [{ id: 'found', name: '찾은 메뉴', items: this.found.items }] }; this.drawMenu(); }
+      else this.markFound(true);
+    }
+    else if (m.kind === 'cart') {
+      this.cart = data; this.drawCart();
+      if ($('k-confirm')) this.dismiss();     // the order changed after the question was asked: the server will ask again
+    }
+    else if (m.kind === 'confirm' && this.cards) this.confirm(data);
+    else if (m.kind === 'receipt' && this.cards) this.receipt(data);
+    else if (m.kind === 'notice') this.note(data.text, data.level);
+    else if (m.kind === 'receipt') setMessage(words.summary + (data.message ? '. ' + data.message : ''));
+  },
+
+  drawMenu() {
+    const cats = (this.menu && this.menu.categories) || [], list = $('menu-list');
+    if (!cats.length) {
+      $('menu-cats').replaceChildren();
+      stateView(list, 'empty', { center: true, title: running ? '아직 보여 줄 메뉴가 없습니다' : '대화를 시작하면 메뉴가 여기에 나타납니다' });
+      return;
+    }
+    // The buttons filter: one kind of menu at a time, or all of it. (They used to scroll to the section, which
+    // showed nothing when the section was already in view or the list could not scroll further.)
+    if (!cats.some(c => c.id === this.category)) this.category = null;
+    setKids($('menu-cats'), cats.length > 1 ? [el('button', { type: 'button', 'data-cat': '', onclick: () => this.filter(null) }, '전체'),
+      ...cats.map(c => el('button', { type: 'button', 'data-cat': c.id, onclick: () => this.filter(c.id) }, c.name))] : null);
+    setKids(list, cats.map((c, i) => el('section', { class: 'menu-cat', id: 'menu-cat-' + i, 'data-cat': c.id, 'aria-label': c.name },
+      el('h3', {}, c.name), el('div', { class: 'items' }, (c.items || []).map(item => this.itemNode(item))))));
+    this.applyFilter();
+    this.markFound(false);
+  },
+  filter(id) {
+    this.category = id;
+    this.applyFilter();
+    $('menu-scroll').scrollTop = 0;
+  },
+  applyFilter() {
+    document.querySelectorAll('#menu-list .menu-cat').forEach(node => { node.hidden = this.category !== null && node.dataset.cat !== this.category; });
+    document.querySelectorAll('#menu-cats button').forEach(b => b.setAttribute('aria-pressed', String((b.dataset.cat || null) === this.category)));
+  },
+
+  // An item can be pressed only when the definition offers the add_item action; otherwise it is a label, not a button.
+  itemNode(item) {
+    const attrs = { class: 'item' + (item.sold_out ? ' sold' : ''), 'data-item': item.id };
+    const kids = [el('span', { class: 'nm' }, item.name), item.description ? el('span', { class: 'ds' }, item.description) : null,
+      el('span', { class: 'pr' }, won(item.price)), item.sold_out ? el('span', { class: 'tag' }, '품절') : null];
+    if (!this.can('add_item')) return el('div', attrs, kids);
+    return el('button', Object.assign(attrs, { type: 'button', disabled: !!item.sold_out, onclick: () => this.press(item),
+      'aria-label': item.name + ', ' + won(item.price) + (item.sold_out ? ', 품절' : ', 눌러서 담기') }), kids);
+  },
+
+  // items of the last `items` display stay marked until the customer's next turn
+  markFound(scroll) {
+    const ids = new Set(this.found ? this.found.items.map(i => i.id) : []);
+    // what the agent found may be in a kind of menu that the filter hides: show everything again
+    if (this.category !== null && [...document.querySelectorAll('#menu-list .menu-cat[hidden] .item')].some(n => ids.has(n.dataset.item))) {
+      this.category = null; this.applyFilter();
+    }
+    let first = null;
+    document.querySelectorAll('#menu-list .item').forEach(node => {
+      const hit = ids.has(node.dataset.item), old = node.querySelector('.tag.found');
+      node.classList.toggle('hl', hit);
+      if (old) old.remove();
+      if (!hit) return;
+      if (!node.classList.contains('sold')) { node.append(el('span', { class: 'tag found' }, '찾은 메뉴')); first = first || node; }
+    });
+    const caption = $('kiosk-notes').querySelector('.found');
+    if (caption) caption.remove();
+    if (!this.found) return;
+    const n = this.found.items.length, q = this.found.query;
+    $('kiosk-notes').prepend(el('div', { class: 'found', role: 'status' },
+      n ? (q ? '“' + q + '”에 맞는 메뉴 ' : '찾은 메뉴 ') + n + '개를 표시했습니다.' : (q ? '“' + q + '”에 맞는 메뉴를 찾지 못했습니다.' : '맞는 메뉴를 찾지 못했습니다.')));
+    first = first || document.querySelector('#menu-list .item.hl');
+    if (scroll && first) first.scrollIntoView({ block: 'center', behavior: calm() ? 'auto' : 'smooth' });
+  },
+  clearFound() { if (this.found) { this.found = null; this.markFound(false); } },
+
+  drawCart() {
+    const c = this.cart || {}, lines = c.lines || [];
+    const count = typeof c.count === 'number' ? c.count : lines.reduce((n, l) => n + (l.quantity || 1), 0);
+    $('order-count').textContent = count ? count + '개' : '';
+    setKids($('order-lines'), lines.length ? lines.map(l => el('li', { class: 'oline', 'data-line': l.line_id },
+        el('span', { class: 'nm' }, l.name, (l.options || []).length ? el('small', {}, l.options.join(' · ')) : null),
+        el('span', { class: 'qty' }, (l.quantity || 1) + '개'),
+        el('span', { class: 'amt' }, won(l.line_total)),
+        this.can('remove_item') ? el('button', { type: 'button', class: 'ghost rm', 'aria-label': l.name + ' 빼기', disabled: !this.live(),
+          onclick: () => sendAction('remove_item', { line_id: l.line_id }, l.name + ' 빼기') }, '빼기') : null))
+      : el('li', { class: 'order-empty' }, '아직 담은 메뉴가 없습니다.' + (this.can('add_item') ? ' 메뉴를 누르거나 말로 주문하세요.' : ' 말로 주문하세요.')));
+    setKids($('order-sums'),
+      c.discount ? el('div', {}, el('dt', {}, '주문 금액'), el('dd', {}, won(c.subtotal))) : null,
+      c.discount ? el('div', { class: 'discount' }, el('dt', {}, '할인' + (c.coupon_name || c.coupon ? ' (' + (c.coupon_name || '쿠폰 ' + c.coupon) + ')' : '')), el('dd', {}, '−' + won(c.discount))) : null,
+      el('div', { class: 'total' }, el('dt', {}, '합계'), el('dd', { id: 'order-total' }, won(c.total || 0))));
+    setKids($('order-bar'), el('span', {}, '주문 내역 ', el('span', { class: 'n' }, count + '개')),
+      el('span', { class: 'tot' }, won(c.total || 0)), el('span', { class: 'go' }, '보기'));
+  },
+  // narrow screens: the order opens as a sheet from the bar at the bottom
+  sheet(open) {
+    document.body.classList.toggle('order-open', open);
+    $('kscrim').hidden = !(open || this.picking);
+  },
+
+  press(item) {
+    if (!this.live() || !this.can('add_item') || item.sold_out) return;
+    if ((item.options || []).some(o => o.required)) this.openPicker(item);
+    else sendAction('add_item', { item_id: item.id, quantity: 1, options: {} }, item.name + ' 담기');
+  },
+
+  // Asked only when a choice must be made. A required option starts with nothing chosen; an optional one
+  // starts at its default.
+  openPicker(item) {
+    const chosen = {}, options = item.options || [], box = $('picker');
+    let quantity = 1;
+    options.forEach(o => { if (!o.required && o.default && (o.choices || []).some(c => c.id === o.default)) chosen[o.id] = o.default; });
+    const choiceOf = o => (o.choices || []).find(c => c.id === chosen[o.id]);
+    const price = () => (item.price + options.reduce((sum, o) => sum + ((choiceOf(o) || {}).price_delta || 0), 0)) * quantity;
+    const complete = () => options.every(o => !o.required || chosen[o.id]);
+    const add = () => {
+      const names = options.filter(o => chosen[o.id] && chosen[o.id] !== o.default).map(o => choiceOf(o).name);
+      this.closePicker();
+      sendAction('add_item', { item_id: item.id, quantity, options: Object.assign({}, chosen) },
+        item.name + (names.length ? ' (' + names.join(', ') + ')' : '') + (quantity > 1 ? ' ' + quantity + '개' : '') + ' 담기');
+    };
+    const paint = () => {
+      const focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.k : null;
+      setKids(box,
+        el('h2', { id: 'picker-title' }, item.name),
+        el('div', { class: 'base' }, won(item.price) + (item.description ? ' · ' + item.description : '')),
+        options.map(o => el('fieldset', { 'data-option': o.id },
+          el('legend', {}, o.name, badge(o.required ? '꼭 골라 주세요' : '원하면 고르세요', o.required && !chosen[o.id] ? 'b-out' : '')),
+          el('div', { class: 'choices' }, (o.choices || []).map(c => el('button', { type: 'button', 'data-choice': c.id, 'data-k': o.id + '/' + c.id,
+            'aria-pressed': String(chosen[o.id] === c.id),
+            onclick: () => { if (chosen[o.id] === c.id && !o.required && !o.default) delete chosen[o.id]; else chosen[o.id] = c.id; paint(); } },
+            c.name, c.price_delta ? el('small', {}, (c.price_delta > 0 ? '+' : '−') + won(Math.abs(c.price_delta))) : null))))),
+        el('fieldset', {}, el('legend', {}, '수량'),
+          el('div', { class: 'stepper' },
+            el('button', { type: 'button', class: 'ghost', 'data-k': 'less', 'aria-label': '하나 줄이기', disabled: quantity <= 1, onclick: () => { quantity -= 1; paint(); } }, '−'),
+            el('output', { id: 'picker-qty', 'aria-live': 'polite' }, quantity + '개'),
+            el('button', { type: 'button', class: 'ghost', 'data-k': 'more', 'aria-label': '하나 늘리기', disabled: quantity >= 20, onclick: () => { quantity += 1; paint(); } }, '+'))),
+        el('div', { class: 'pacts' },
+          el('button', { type: 'button', class: 'ghost', 'data-k': 'cancel', onclick: () => this.closePicker() }, '취소'),
+          el('button', { type: 'button', class: 'go', id: 'picker-add', 'data-k': 'add', disabled: !complete(), onclick: add },
+            complete() ? '담기 · ' + won(price()) : '먼저 골라 주세요')));
+      const back = focus && box.querySelector('[data-k="' + focus + '"]:not(:disabled)');
+      if (back) back.focus();
+    };
+    this.picking = true;
+    box.hidden = false; $('kscrim').hidden = false;
+    paint();
+    const firstChoice = box.querySelector('.choices button');
+    if (firstChoice) firstChoice.focus({ preventScroll: true });
+  },
+  closePicker() {
+    this.picking = false;
+    $('picker').hidden = true; $('picker').replaceChildren();
+    $('kscrim').hidden = !document.body.classList.contains('order-open');
+  },
+
+  lineRows(lines) {
+    return (lines || []).length ? el('ol', { class: 'klines' }, lines.map(l => el('li', {},
+      el('span', {}, l.name, (l.options || []).length ? el('small', {}, l.options.join(' · ')) : null),
+      el('span', {}, (l.quantity || 1) + '개'), el('span', { class: 'amt' }, won(l.line_total))))) : null;
+  },
+  place(card, lock) {
+    $('spot').replaceChildren(card); $('spot').hidden = false;
+    $('menu-panel').classList.toggle('locked', lock);
+    this.closePicker(); this.sheet(false);
+    card.scrollIntoView({ block: 'start' });
+  },
+  sums(data) {
+    return [data.discount ? el('div', { class: 'ktotal sub' }, '할인' + (data.coupon_name ? ' (' + data.coupon_name + ')' : ''), el('span', {}, '−' + won(data.discount))) : null,
+      data.total != null ? el('div', { class: 'ktotal' }, '합계', el('b', {}, won(data.total))) : null];
+  },
+  // A write tool is waiting for the customer's word. The answer is spoken, typed, or given with the two buttons:
+  // a button sends the answer as the customer's own words, so it goes through the same consent check as speech.
+  answer(text) {
+    if (!this.live()) return;
+    document.querySelectorAll('#k-confirm .kacts button').forEach(b => { b.disabled = true; });
+    send(text);
+  },
+  confirm(data) {
+    this.confirmTool = data.tool || this.confirmTool;
+    this.place(el('div', { class: 'kcard k-confirm', id: 'k-confirm', role: 'group', 'aria-label': '주문 확인', 'data-tool': this.confirmTool || '' },
+      el('div', { class: 'kh' }, '주문 확인', badge('답을 기다리는 중', 'b-out')),
+      el('div', { class: 'kq' }, data.text || '이대로 진행할까요?'),
+      this.lineRows(data.lines), this.sums(data),
+      el('div', { class: 'khow' }, '“네” 또는 “아니요”라고 말하거나 아래 단추를 눌러 주세요.', el('small', {}, '답하기 전에는 아무것도 진행되지 않습니다.')),
+      el('div', { class: 'kacts' },
+        el('button', { type: 'button', class: 'ghost', 'data-answer': 'no', disabled: !this.live(), onclick: () => this.answer('아니요, 하지 않을게요.') }, '아니요'),
+        el('button', { type: 'button', 'data-answer': 'yes', disabled: !this.live(), onclick: () => this.answer('네, 그렇게 해 주세요.') }, '네'))), true);
+  },
+  receipt(data) {
+    this.confirmTool = null;
+    this.place(el('div', { class: 'kcard k-receipt', id: 'k-receipt', role: 'group', 'aria-label': '영수증' },
+      el('div', { class: 'kh' }, '주문 번호'),
+      el('div', { class: 'orderno' }, data.order_no || '-'),
+      this.lineRows(data.lines), this.sums(data),
+      data.message ? el('div', { class: 'kmsg' }, data.message) : null,
+      el('div', { class: 'kacts' },
+        el('button', { type: 'button', class: 'ghost', onclick: () => this.dismiss() }, '닫기'),
+        el('button', { type: 'button', 'data-restart': '', onclick: () => restart() }, '처음으로'))), false);
+  },
+  dismiss() { $('spot').hidden = true; $('spot').replaceChildren(); $('menu-panel').classList.remove('locked'); },
+
+  // The card stays until its tool executed, a new confirm display replaces it, or the order changes (a cart display).
+  // An answer that was not consent may be followed by the same question again, with no new display: the card is
+  // then dimmed and says so, and goes away once a later customer turn ends without its tool being called.
+  turn() { this.asked = false; this.clearFound(); },
+  turnDone() {
+    const card = $('k-confirm');
+    if (card && card.classList.contains('reask') && !this.asked) { this.confirmTool = null; this.dismiss(); }
+  },
+  onTool(m) {
+    if (!this.cards || m.state === 'start' || m.state === 'cancelled') return;
+    if (m.needs_confirmation) {
+      // the card is drawn from the confirm display that follows; until it arrives the system's own sentence stands in
+      this.confirmTool = m.name;
+      if (!$('k-confirm') || $('k-confirm').dataset.tool !== m.name) this.confirm({ text: m.confirmation_text || '', tool: m.name });
+      return;
+    }
+    if (this.confirmTool !== m.name) return;
+    this.asked = true;
+    const card = $('k-confirm');
+    if (m.error_type === 'not_confirmed') {
+      Flow.source(m.name, 'failed', undefined, '← 동의가 없어 실행하지 않음');
+      if (!card) return;
+      card.classList.add('reask');
+      card.querySelector('.kh').replaceChildren('주문 확인', badge('다시 확인 중'));
+      card.querySelector('.khow small').textContent = '아직 아무것도 진행되지 않았습니다. 주문 내역은 그대로입니다.';
+      card.querySelectorAll('.kacts button').forEach(b => { b.disabled = !this.live(); });
+      $('menu-panel').classList.remove('locked');      // the customer may go on ordering instead of answering
+      return;
+    }
+    this.confirmTool = null;
+    if (card) this.dismiss();
+  },
+
+  // a short-lived line; `stay` keeps it (the handoff)
+  note(text, level, stay) {
+    if (!text) return;
+    if (!this.cards) { setMessage(text, level === 'error'); return; }
+    const box = $('kiosk-notes'), node = el('div', { class: 'notice' + (level === 'warn' || level === 'error' ? ' bad' : ''), role: 'status' }, text);
+    box.append(node);
+    const lines = box.querySelectorAll('.notice:not(.stay)');
+    if (lines.length > 2) lines[0].remove();
+    if (stay) node.classList.add('stay'); else setTimeout(() => node.remove(), 7000);
+  },
+};
+const calm = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// The customer touched the screen instead of speaking. Sent only for actions the agent's definition offers.
+function sendAction(name, args, label) {
+  if (!Screen.live() || !Screen.can(name)) return;
+  const id = nextRequestId++;
+  sentAt[id] = performance.now();
+  if (ctx) speakTimes[id] = ctx.currentTime;
+  setMessage('');
+  userTurns += 1;                    // the server counts a touch as a turn
+  Screen.turn();
+  appendChat(el('div', { class: 'msg user touch' }, '화면에서 누름: ' + label));
+  chatBubbles[id] = addBubble('assistant', '');
+  Flow.turn('(화면에서 누름) ' + label);
+  ws.send(JSON.stringify({ type: 'action', id, name, arguments: args }));
+}
+
+// ---- chat column -------------------------------------------------------------------------------
+function addBubble(role, text) {
+  const node = el('div', { class: 'msg ' + role }, text);
+  appendChat(node);
+  return node;
+}
+function appendChat(node, beforeId) {
+  const log = $('chat-log');
+  if (log.querySelector('.stateview')) log.replaceChildren();
+  const bubble = beforeId !== undefined && chatBubbles[beforeId];
+  if (bubble && bubble.parentNode === log) log.insertBefore(node, bubble); else log.append(node);
+  log.scrollTop = log.scrollHeight;
+}
+// A bubble made by speech recognition, with the "잘못 알아들음" action under it. The turn number is the server's
+// (`turn` on transcript or chat_done) when it sends one; otherwise the count of customer turns so far.
+function addHeard(m) {
+  const known = typeof m.turn === 'number';
+  if (known) userTurns = Math.max(userTurns, m.turn); else userTurns += 1;
+  const info = { turn: known ? m.turn : userTurns, control: null, wrap: null };
+  const bubble = el('div', { class: 'msg user' }, m.text);
+  if (cfg && cfg.session_id) info.control = mishearControl({ sid: cfg.session_id, turn: () => info.turn, said: m.text, recorded });
+  info.wrap = el('div', { class: 'heard-wrap', 'data-turn': info.turn }, bubble, info.control ? info.control.node : null);
+  heardTurns[m.id] = info;
+  appendChat(info.wrap);
+}
+function bubbleFor(id) {
+  if (!chatBubbles[id]) chatBubbles[id] = addBubble('assistant', '');
+  return chatBubbles[id];
+}
+
+function onTool(m) {
+  const key = m.id + '|' + m.name + '|' + JSON.stringify(m.arguments);
+  let line = toolLines[key];
+  if (!line) {
+    line = toolLines[key] = el('div', { class: 'msg tool' });
+    appendChat(line, m.id);   // the call belongs above the reply it leads to
+  }
+  const label = m.name + ' (' + argsText(m.arguments) + ')';
+  if (m.state === 'start') {
+    line.textContent = label + ' …';
+  } else if (m.state === 'cancelled') {
+    line.textContent = label + ' 취소됨';
+  } else {
+    const why = m.ok === false && ERROR_LABEL[m.error_type] ? ' · ' + ERROR_LABEL[m.error_type] : '';
+    line.textContent = label + (m.needs_confirmation ? ' 실행 전 확인 단계' : m.ok === false ? ' 실패' + why : '') + ' · ' + sec(m.ms);
+    line.title = m.result || '';
+    line.classList.toggle('failed', m.ok === false && !m.needs_confirmation);
+    if (Screen.cards) Screen.onTool(m);      // screen agents: the confirm card is on the screen, not in the chat
+    else if (isWrite(m)) onWriteTool(m);
+  }
+}
+
+// A write tool runs in two phases. Phase one changes nothing and waits for the customer's word;
+// the card stays in the conversation and turns into "executed" or "not executed".
+function onWriteTool(m) {
+  let card = pendingConfirm[m.name];
+  if (m.needs_confirmation) {
+    if (card) card.remove();
+    card = pendingConfirm[m.name] = el('div', { class: 'confirm', 'data-tool': m.name, 'data-state': 'waiting' },
+      el('div', { class: 'head' }, badge('동의 대기', 'b-out'), m.name + ' · 아직 실행되지 않았습니다'),
+      el('div', { class: 'q' }, m.confirmation_text || m.result || '고객에게 실행 여부를 확인합니다.'),
+      el('div', { class: 'note' }, '고객이 다음 말에서 동의해야 실행됩니다. 동의가 아니면 아무것도 바뀌지 않습니다.'),
+      el('div', { class: 'quick' },
+        el('button', { class: 'small', onclick: () => send('네, 그렇게 해 주세요.') }, '동의한다고 답하기'),
+        el('button', { class: 'small ghost', onclick: () => send('아니요, 하지 않을게요.') }, '하지 않는다고 답하기')));
+    appendChat(card, m.id);
+    return;
+  }
+  if (!card) return;
+  if (m.ok !== false && m.executed) {
+    card.className = 'confirm executed'; card.dataset.state = 'executed';
+    card.querySelector('.head').replaceChildren(badge('실행됨', 'b-back'), m.name + ' · 고객 동의 후 실행했습니다');
+    card.querySelector('.note').textContent = String(m.result || '').split('\n')[0];
+    card.querySelector('.quick').remove();
+    delete pendingConfirm[m.name];
+  } else if (m.error_type === 'not_confirmed') {
+    card.className = 'confirm declined'; card.dataset.state = 'declined';
+    card.querySelector('.head').replaceChildren(badge('실행하지 않음'), m.name + ' · 고객의 말이 동의가 아니었습니다');
+    card.querySelector('.note').textContent = '아무것도 바뀌지 않았습니다.';
+    card.querySelector('.quick').remove();
+    delete pendingConfirm[m.name];
+    Flow.source(m.name, 'failed', undefined, '← 동의가 없어 실행하지 않음');
+  }
+}
+
+function onKnowledge(m) {
+  const line = el('div', { class: 'msg tool' });
+  const sources = m.sources || [];
+  if (m.ok === false) {
+    line.textContent = '지식 검색 실패: ' + (m.message || '') + ' (자료 없이 답변)';
+    line.classList.add('failed');
+  } else {
+    const timing = ' · ' + sec(m.ms) + (typeof m.top === 'number' ? ', 최고 점수 ' + m.top.toFixed(2) : '');
+    line.textContent = sources.length
+      ? '지식 검색: ' + sources.map(t => t.length > 40 ? t.slice(0, 40) + '…' : t).join(' / ') + timing
+      : '지식 검색: 기준 이상인 자료 없음' + timing;
+    line.title = sources.join('\n');
+  }
+  appendChat(line, m.id);
+}
+
+function onHandoff(m) {
+  handedOff = true;
+  appendChat(el('div', { class: 'handoff-card', id: 'handoff-card', role: 'status' },
+    el('strong', {}, '상담원에게 연결되었습니다'),
+    el('span', {}, (m.reason ? '사유: ' + m.reason : '에이전트가 이 대화를 사람에게 넘겼습니다.') + (m.rule_id ? ' (넘김 조건 ' + m.rule_id + ')' : '')),
+    el('div', { class: 'muted', style: 'font-size:12.5px;margin-top:2px' }, '에이전트는 더 답하지 않습니다. 새 대화는 정지한 뒤 다시 시작하세요.')));
+  Flow.log('live', '상담원에게 넘김' + (m.reason ? ': ' + m.reason : ''));
+  $('s-state').textContent = '상담원 연결됨';
+  if (Screen.on) Screen.note('직원에게 연결했습니다. 잠시만 기다려 주세요.', 'info', true);
+  setComposer();
+}
+
+function setComposer() {
+  const open = running && !!cfg && !handedOff;
+  $('text').disabled = !open; $('send').disabled = !open;
+  $('clear').disabled = !(running && cfg);
+  $('text').placeholder = handedOff ? '상담원에게 넘어간 대화입니다. 더 보낼 수 없습니다.'
+    : !running ? '대화를 시작하면 여기에 입력할 수 있습니다.'
+    : channel === 'text' ? '에이전트에게 할 말을 입력하세요.' : '말로 하거나, 여기에 입력해도 됩니다.';
+  Screen.freeze();
+}
+
+function send(preset) {
+  const text = (typeof preset === 'string' ? preset : $('text').value).trim();
+  if (!running || !cfg || handedOff || !text) return;
+  const id = nextRequestId++;
+  sentAt[id] = performance.now();
+  if (ctx) speakTimes[id] = ctx.currentTime;
+  setMessage('');
+  userTurns += 1;
+  Screen.turn();
+  addBubble('user', text);
+  chatBubbles[id] = addBubble('assistant', '');
+  if (typeof preset !== 'string') $('text').value = '';
+  Flow.turn(text);
+  ws.send(JSON.stringify({ type: 'chat', id, text }));
+}
+
+function setMessage(text, bad) {
+  setKids($('message'), text ? el('div', { class: 'notice' + (bad ? ' bad' : '') }, text) : '');
+}
+
+function sendConfig() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !cfg || channel === 'text') return;
+  ws.send(JSON.stringify({
+    type: 'config', barge_in: $('barge').checked, interrupt_mode: $('interrupt-mode').value,
+    speculative: $('speculative').checked, endpoint: $('endpoint').value, stt: $('stt').value,
+  }));
+}
+
+// ---- choosing the agent ------------------------------------------------------------------------
+function idleHint() {
+  if (running) return;
+  const agent = agents.find(a => a.id === $('agent').value);
+  if (agent && blocked) { stateView($('chat-log'), 'empty', { center: true, title: agent.name + '와(과)는 아직 대화할 수 없습니다', hint: blocked }); return; }
+  stateView($('chat-log'), 'empty', { center: true,
+    title: agent ? agent.name + '와(과) 대화할 준비가 되었습니다' : '에이전트를 고르세요',
+    hint: agent ? (agent.description ? agent.description + '. ' : '') + '채널을 고르고 "대화 시작"을 누르세요.' : '' });
+}
+
+// An outline: an agent whose tools nobody has registered and that was never deployed. It cannot hold a conversation.
+function whyBlocked(agent) {
+  const ready = agent ? agentReadiness(agent, registeredTools) : null;
+  if (!ready || ready.key !== 'outline') return '';
+  return '이 에이전트는 뼈대입니다. 도구 ' + ready.missing.length + '개가 등록되지 않아 대화할 수 없습니다: ' + ready.missing.join(', ');
+}
+
+const RECORD_KEY = 'agentkit.record';
+async function init() {
+  if (!$('nav').children.length) mountNav('talk');
+  applyChannel();
+  stateView($('chat-log'), 'loading', { title: '에이전트 목록을 불러오는 중입니다', center: true });
+  const health = api('/api/health').catch(() => null);
+  try {
+    agents = await loadAgents();
+  } catch (err) {
+    errorView($('chat-log'), err, '에이전트 목록', init).classList.add('center');
+    $('s-state').textContent = err.kind === 'unreachable' ? '서버 없음' : '대기';
+    return;
+  }
+  if (!agents.length) {
+    stateView($('chat-log'), 'empty', { center: true, title: '등록된 에이전트가 없습니다',
+      hint: '제작실에서 제작 에이전트에게 새 에이전트를 만들어 달라고 하거나, agents 폴더에 정의서를 추가하세요.',
+      action: el('a', { href: '/studio' }, '제작실 열기') });
+    return;
+  }
+  const want = new URLSearchParams(location.search);
+  // which tools the server really has: an agent whose tools are not registered is only an outline
+  registeredTools = null;
+  try {
+    const listed = await api('/api/tools');
+    registeredTools = toolIds(listed.tools || listed || []);
+  } catch (err) { /* tools module not installed: readiness then only says deployed or draft */ }
+  fillAgentSelect($('agent'), agents, want.get('agent') || (agents.find(a => a.deployment && a.deployment.stable) || agents[0]).id, false, registeredTools);
+  $('agent').disabled = false;
+  // recording: asked for in the address > what this person chose last time > on when the server runs for internal testing
+  const info = await health;
+  let stored = null;
+  try { stored = localStorage.getItem(RECORD_KEY); } catch (err) { /* storage is blocked: the server's default applies */ }
+  $('test').checked = want.get('test') === '1' ? true : stored !== null ? stored === '1' : !!(info && info.internal_testing);
+  const ch = want.get('channel');
+  if (NODES[ch]) document.querySelector('input[name=channel][value=' + ch + ']').checked = true;
+  await loadAgent(want.get('version'));
+}
+
+async function loadAgent(wantVersion) {
+  const id = $('agent').value, ticket = ++agentLoad;
+  const agent = agents.find(a => a.id === id);
+  definition = null;
+  $('toggle').disabled = true; $('restart').disabled = true;
+  $('version').disabled = true;
+  $('flow-caption').textContent = '';
+  let versions = [], deployment = agent && agent.deployment;
+  try {
+    const info = await api('/api/agents/' + encodeURIComponent(id));
+    versions = asList(info, 'versions');
+    deployment = (info && info.deployment) || deployment;
+  } catch (err) {
+    if (err.kind === 'unreachable') { errorView($('chat-log'), err, '', init).classList.add('center'); return; }
+  }
+  if (ticket !== agentLoad) return;
+  const stable = deployment && deployment.stable;
+  stableVersion = stable || null;
+  const select = $('version');
+  select.replaceChildren();
+  if (stable || !versions.length) select.add(new Option(stable ? '배포된 버전 (v' + stable + ')' : '배포된 버전', ''));
+  versions.slice().sort((a, b) => b.version - a.version).forEach(v =>
+    select.add(new Option('v' + v.version + ' · ' + (STATE_LABEL[v.state] || v.state), String(v.version), false, String(v.version) === String(wantVersion || ''))));
+  select.disabled = select.options.length < 2;
+  await loadDefinition();
+}
+
+async function loadDefinition() {
+  const id = $('agent').value, ticket = ++agentLoad;
+  const chosen = $('version').value;
+  const n = chosen || stableVersion;
+  definition = null;
+  // The agent's bare tool names mean the tools of its packs (the cafe and the burger shop both have a
+  // "search_menu"), so the contracts are asked for per set of packs.
+  const row = agents.find(a => a.id === id) || {};       // loadAgents keeps the server row in .raw
+  const packs = (row.tool_packs || (row.raw && row.raw.tool_packs) || []).join(',');
+  if (toolContracts === null || toolPacks !== packs) {
+    try {
+      toolContracts = Object.fromEntries(asList(await api('/api/tools' + (packs ? '?packs=' + encodeURIComponent(packs) : '')), 'tools').map(t => [t.name, t]));
+      toolPacks = packs;
+    } catch (err) { toolContracts = null; }   // lanes are still drawn from the names in the definition
+  }
+  let problem = '';
+  if (n) {
+    try {
+      const body = await api('/api/agents/' + encodeURIComponent(id) + '/versions/' + n);
+      definition = (body && body.definition) || body;
+    } catch (err) {
+      problem = err.kind === 'missing' ? '정의서 조회 기능이 설치되지 않아 도구 목록을 미리 보여 줄 수 없습니다. 대화는 할 수 있습니다.'
+        : '정의서를 불러오지 못했습니다 (' + err.message + '). 대화는 할 수 있습니다.';
+    }
+  } else {
+    problem = '이 에이전트에는 배포된 버전이 없고 버전 목록도 받지 못했습니다. 대화를 시작하면 서버가 거절할 수 있습니다.';
+  }
+  if (!problem && chosen && !stableVersion) problem = '이 에이전트는 아직 배포된 버전이 없습니다. 고른 버전(v' + chosen + ')으로 시험 삼아 대화합니다.';
+  if (ticket !== agentLoad) return;
+  blocked = whyBlocked(agents.find(a => a.id === id));
+  setMessage(blocked || problem);
+  // The avatar is a way of showing any agent, not part of an agent's specification: always offered.
+  // The definition only supplies the face; without one the server uses its default face.
+  const ownFace = definition && definition.avatar && definition.avatar.image;
+  const avatarInput = document.querySelector('input[name=channel][value=avatar]');
+  avatarInput.disabled = false;
+  $('avatar-option').title = '';
+  $('avatar-option').dataset.face = ownFace ? 'own' : 'default';
+  if (definition && definition.voice) {
+    $('stt').value = definition.voice.stt || 'whisper';
+    $('endpoint').value = definition.voice.endpoint || 'silence';
+    $('interrupt-mode').value = definition.voice.interrupt_mode || 'unmute';
+    $('barge').checked = !!definition.voice.barge_in;
+    $('speculative').checked = !!definition.voice.speculative;
+  }
+  const tools = definition ? (definition.tools || []) : [];
+  $('flow-caption').textContent = definition
+    ? 'v' + (definition.version || n) + ' · 도구 ' + tools.length + '개' + (definition.knowledge && definition.knowledge.kind !== 'none' ? ' · 지식 검색' : '')
+    : '';
+  applyChannel();
+  Flow.buildLanes();
+  // where the menu and the order will be, as soon as the agent is chosen; the session's `ready` has the last word
+  Screen.apply((definition && definition.screen && definition.screen.panels) || [], []);
+  Screen.clear();
+  $('toggle').disabled = !!blocked; $('restart').disabled = !!blocked;
+  idleHint();
+}
+
+// ---- engines: the video engine and the speech recogniser load on demand and unload when idle -------------
+// Shown for the channels that need them. "엔진 준비" loads ahead of the conversation, so that starting it does not wait.
+const Engines = {
+  timer: null, last: null,
+  needs() { return channel === 'avatar' ? ['video', 'stt'] : channel === 'voice' ? ['stt'] : []; },
+  minutes(seconds) { return seconds >= 90 ? Math.round(seconds / 60) + '분' : Math.max(1, Math.round(seconds)) + '초'; },
+  async poll() {
+    clearTimeout(this.timer);
+    if (!this.needs().length) { $('engine').hidden = true; return; }
+    try { this.last = await (await fetch('/api/engines')).json(); } catch (err) { this.last = null; }
+    this.draw();
+    const loading = this.last && this.needs().some(k => this.last[k] && this.last[k].state === 'loading');
+    this.timer = setTimeout(() => this.poll(), loading ? 2000 : 15000);
+  },
+  draw() {
+    const box = $('engine'), status = this.last, needs = this.needs();
+    box.hidden = !needs.length || !status;
+    if (box.hidden) return;
+    const names = { video: '영상', stt: '음성 인식' };
+    const parts = needs.filter(k => status[k]).map(k => ({ key: k, ...status[k] }));
+    const loading = parts.filter(p => p.state === 'loading'), off = parts.filter(p => p.state === 'unloaded');
+    const ready = parts.filter(p => p.state === 'ready'), used = parts.filter(p => p.state === 'in_use');
+    let text, tone;
+    if (loading.length) {
+      const p = loading[0], left = Math.max(1, Math.round((p.expected_s || 45) - (p.loading_s || 0)));
+      text = '엔진 준비 중 · 약 ' + left + '초'; tone = 'busy';
+    } else if (off.length) {
+      const wait = off.reduce((sum, p) => sum + (p.expected_s || 0), 0);
+      text = '엔진 꺼짐 · 시작 시 약 ' + this.minutes(wait) + ' 대기'; tone = 'off';
+      if (off[0].error) text = '엔진을 올리지 못했습니다';
+    } else {
+      const soon = ready.map(p => p.unloads_in_s).filter(v => v != null);
+      text = '엔진 준비됨' + (used.length ? ' · 사용 중' : soon.length ? ' · ' + this.minutes(Math.min(...soon)) + ' 뒤 자동 내림' : ''); tone = 'on';
+    }
+    const word = { loading: '준비 중', unloaded: '꺼짐', ready: '준비됨', in_use: '사용 중' };
+    $('engine-state').title = parts.map(p => names[p.key] + ' 엔진: ' + word[p.state]).join(', ')
+      + '. 쓰지 않으면 ' + this.minutes(status.idle_unload_s || 0) + ' 뒤 내려가 GPU 메모리를 돌려주고, 다음에 쓸 때 다시 올라옵니다.';
+    $('engine-state').textContent = text; $('engine-state').dataset.tone = tone;
+    $('engine-warm').hidden = !off.length || !!loading.length;
+    $('engine-unload').hidden = !ready.length || !!loading.length || running;
+  },
+  async post(path) {
+    $('engine-warm').disabled = $('engine-unload').disabled = true;
+    try { this.last = await (await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.fromEntries(['video', 'stt'].map(k => [k, this.needs().includes(k)]))) })).json(); } catch (err) { /* the next poll shows the truth */ }
+    $('engine-warm').disabled = $('engine-unload').disabled = false;
+    this.poll();
+  },
+};
+
+function applyChannel() {
+  channel = document.querySelector('input[name=channel]:checked').value;
+  Engines.poll();
+  $('stage').classList.toggle('no-avatar', channel !== 'avatar');
+  $('avatar-box').hidden = channel !== 'avatar';
+  $('voicebar').hidden = channel !== 'voice';
+  $('open-settings').hidden = channel === 'text';
+  $('clear').hidden = channel === 'text';
+  $('s-audio-box').hidden = channel === 'text';
+  $('s-delay-label').textContent = channel === 'text' ? '보낸 뒤 답이 보이기까지' : '말이 끝난 뒤 답변이 시작되기까지';
+  Flow.buildPath();
+  setComposer();
+}
+
+// ---- session -----------------------------------------------------------------------------------
+function lockControls(locked) {
+  document.querySelectorAll('input[name=channel]').forEach(node => { node.disabled = locked || (node.value === 'avatar' && $('avatar-option').title !== ''); });
+  $('agent').disabled = locked; $('test').disabled = locked;
+  $('version').disabled = locked || $('version').options.length < 2;
+}
+
+async function start() {
+  if (blocked) { setMessage(blocked); return; }
+  setMessage('');
+  const useMic = channel !== 'text';
+  if (useMic && (!navigator.mediaDevices || !window.AudioWorkletNode)) {
+    setMessage('이 주소에서는 마이크를 쓸 수 없습니다. http://localhost 또는 HTTPS로 접속하거나 글 채널을 쓰세요.', true);
+    return;
+  }
+  $('toggle').disabled = true; $('restart').disabled = true;
+  lockControls(true);
+  try {
+    let capture = null;
+    if (useMic) {
+      mic = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      ctx = new AudioContext({ sampleRate: SR });
+      await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSource], { type: 'application/javascript' })));
+      capture = new AudioWorkletNode(ctx, 'capture');
+      const silent = ctx.createGain();
+      silent.gain.value = 0;
+      ctx.createMediaStreamSource(mic).connect(capture).connect(silent).connect(ctx.destination);
+      monitorGain = ctx.createGain();
+      monitorGain.connect(ctx.destination);
+      outputGain = ctx.createGain();
+      outputGain.connect(monitorGain);
+    }
+
+    $('chat-log').replaceChildren();
+    $('trace').replaceChildren();
+    Screen.clear();
+    const test = $('test').checked;
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'
+      + qs({ agent: $('agent').value, channel, version: $('version').value, test: test ? 1 : 0 }));
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = e => { chain = chain.then(() => onMessage(e.data)).catch(err => console.error(err)); };
+    ws.onclose = () => {
+      if (!running) return;
+      stop(lastError ? lastError : cfg ? '연결이 끊어졌습니다. 다시 시작하려면 "대화 시작"을 누르세요.'
+        : '서버에 연결할 수 없습니다. 서버가 켜져 있는지 확인한 뒤 다시 시작하세요.', true);
+    };
+
+    if (capture) capture.port.onmessage = e => {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !cfg) return;
+      ws.send(e.data);
+      const pcm = new Int16Array(e.data);
+      let sum = 0;
+      for (let i = 0; i < pcm.length; i++) sum += pcm[i] * pcm[i];
+      const db = 20 * Math.log10(Math.sqrt(sum / pcm.length) / 32768 + 1e-6);
+      const width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
+      document.querySelectorAll('.level').forEach(node => { node.style.width = width; });
+    };
+
+    running = true; handedOff = false; lastError = '';
+    Engines.poll();          // a conversation that starts with the engines off loads them: show that
+    recorded = test; userTurns = 0; heardTurns = {};
+    document.body.classList.add('running');
+    $('recording').hidden = !test;
+    $('toggle').textContent = '정지';
+    $('toggle').classList.add('on');
+    $('s-state').textContent = '연결 중';
+    stateView($('chat-log'), 'loading', { title: '에이전트에 연결하는 중입니다', center: true });
+  } catch (err) {
+    stop(err.name === 'NotAllowedError' ? '마이크 권한이 거부되었습니다. 브라우저 주소창에서 마이크를 허용하거나 글 채널을 쓰세요.'
+      : '시작하지 못했습니다: ' + err.message, true);
+  } finally {
+    $('toggle').disabled = !!blocked; $('restart').disabled = !!blocked;
+  }
+}
+
+// Back to the first screen: the conversation and the order are dropped and a new session greets the next customer.
+// Offered at all times (the bar) and on the receipt.
+async function restart() {
+  if ($('restart').disabled) return;
+  if (running) stop();
+  Screen.clear();
+  $('chat-log').replaceChildren();
+  await start();
+}
+
+function stop(message, bad) {
+  const wasRunning = running;
+  running = false;
+  document.body.classList.remove('running');
+  Engines.poll();
+  Flow.reset();
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  if (mic) { mic.getTracks().forEach(t => t.stop()); mic = null; }
+  if (ctx) { ctx.close(); ctx = null; }
+  frames.forEach(f => f.bitmap.close());
+  frames = [];
+  cfg = null; playHead = 0; chain = Promise.resolve();
+  scheduled = []; outputGain = null; monitorGain = null; minSeq = 0;
+  sentAt = {}; speakTimes = {}; speechStarts = {}; chatBubbles = {}; toolLines = {}; pendingConfirm = {};
+  heardTurns = {};   // the marks under the bubbles keep working after the conversation ends
+  audioChunks = 0; audioSeconds = 0; speechSpans = []; videoChunkAt = 0; videoInferMs = null;
+  lockControls(false);
+  Screen.closePicker(); Screen.sheet(false);      // what was shown stays readable; touches stop counting (setComposer)
+  $('recording').hidden = true;
+  $('toggle').textContent = '대화 시작';
+  $('toggle').classList.remove('on');
+  document.querySelectorAll('.level').forEach(node => { node.style.width = '0'; });
+  $('listen-label').textContent = '마이크 꺼짐';
+  $('s-state').textContent = '대기';
+  $('s-delay').textContent = '-'; $('s-audio').textContent = '-';
+  document.querySelectorAll('.confirm .quick button, #k-confirm .kacts button').forEach(b => { b.disabled = true; });
+  setComposer();
+  setMessage(message, bad);
+  if (!wasRunning || !$('chat-log').querySelector('.msg, .confirm, .handoff-card')) idleHint();
+}
+
+const LISTEN_STATES = { listening: '듣는 중', hearing: '음성 감지', transcribing: '인식 중', speaking: '답변 중' };
+
+async function onMessage(data) {
+  if (!running) return;
+  if (typeof data === 'string') {
+    const m = JSON.parse(data);
+    if (m.type === 'ready') {
+      cfg = m;
+      if (m.width && m.height) { canvas.width = m.width; canvas.height = m.height; }
+      $('chat-log').replaceChildren();
+      Screen.apply((m.screen && m.screen.panels) || [], m.actions || []);
+      Screen.clear();
+      $('s-state').textContent = '대화 중' + (m.version ? ' · v' + m.version : '');
+      setKids($('s-session'), m.session_id
+        ? el('a', { href: '/monitor' + qs({ session: m.session_id }), title: '모니터에서 이 대화 보기' }, m.session_id) : '-');
+      if (channel !== 'text') $('listen-label').textContent = '마이크 켜짐';
+      setComposer();
+      sendConfig();
+      if (channel === 'text') $('text').focus();
+    } else if (m.type === 'listen_state') {
+      if (!handedOff) $('s-state').textContent = LISTEN_STATES[m.state] || m.state;
+      $('listen-label').textContent = LISTEN_STATES[m.state] || m.state;
+      Flow.listening(m.state);
+    } else if (m.type === 'transcript') {
+      setMessage('');
+      Screen.turn();
+      addHeard(m);
+      chatBubbles[m.id] = addBubble('assistant', '');
+      Flow.transcript(m);
+    } else if (m.type === 'metric' && m.name === 'turn_end') {
+      Flow.pendingEnd = m;
+    } else if (m.type === 'chat_delta') {
+      const bubble = bubbleFor(m.id);
+      bubble.textContent += m.text;
+      $('chat-log').scrollTop = $('chat-log').scrollHeight;
+      if (channel === 'text' && sentAt[m.id] !== undefined) {
+        // the text channel has no "speech" notice: the first characters on screen are the reply reaching the customer
+        const delay = (performance.now() - sentAt[m.id]) / 1000;
+        delete sentAt[m.id];
+        $('s-delay').textContent = delay.toFixed(2) + '초';
+        Flow.onAir({ phase: 'reply' }, delay);
+      }
+    } else if (m.type === 'chat_replace') {
+      // the server withdrew text it had streamed but not spoken
+      bubbleFor(m.id).textContent = m.text;
+    } else if (m.type === 'chat_done') {
+      if (typeof m.text === 'string' && m.text) bubbleFor(m.id).textContent = m.text;
+      else if (chatBubbles[m.id] && !chatBubbles[m.id].textContent) chatBubbles[m.id].remove();
+      const heard = heardTurns[m.id];
+      if (typeof m.turn === 'number') {
+        userTurns = Math.max(userTurns, m.turn);
+        if (heard) { heard.turn = m.turn; heard.wrap.dataset.turn = m.turn; }
+      }
+      if (heard && heard.control) heard.control.retry();   // a mark sent before the server had stored the turn
+      if (m.error) { if (Screen.on) Screen.note(m.error, 'warn'); else setMessage(m.error, true); }   // a refused touch: no words, only the reason
+      if (m.id !== 'opening') Screen.turnDone();
+    } else if (m.type === 'interrupt') {
+      flushPlayback(m.seq);
+      Flow.log('bad', '끼어들기: 재생을 멈추고 어디까지 들렸는지 서버에 알림');
+    } else if (m.type === 'chat_truncate') {
+      const bubble = chatBubbles[m.id];
+      if (bubble) { bubble.textContent = m.text; bubble.classList.add('cut'); }
+      Flow.log('step', '끊긴 답변을 실제로 들린 데까지만 기억: ' + (m.text || '(들린 말 없음)'));
+    } else if (m.type === 'tool') {
+      onTool(m);
+      Flow.tool(m);
+    } else if (m.type === 'display') {
+      Screen.show(m);
+    } else if (m.type === 'knowledge') {
+      Flow.knowledge(m);
+      if (m.state === 'done' || m.state === undefined) onKnowledge(m);
+    } else if (m.type === 'llm') {
+      Flow.llm(m);
+    } else if (m.type === 'tts') {
+      Flow.tts(m);
+    } else if (m.type === 'speech') {
+      (speechStarts[m.seq] = speechStarts[m.seq] || []).push(m);
+    } else if (m.type === 'filler') {
+      // said at once while a tool runs; on the text channel it is shown as a side line, not as the reply
+      appendChat(el('div', { class: 'msg tool' }, '추임새: ' + m.text), m.id);
+      Flow.log('step', '추임새: ' + m.text);
+    } else if (m.type === 'handoff') {
+      onHandoff(m);
+    } else if (m.type === 'notice') {
+      setMessage(m.message || m.text);
+    } else if (m.type === 'error') {
+      // with an id: one reply failed and the conversation goes on. Without: the server says why it is about to close.
+      lastError = m.message || m.text || '서버가 오류를 알렸습니다.';
+      setMessage(lastError, true);
+      if (m.id !== undefined && chatBubbles[m.id]) {
+        if (!chatBubbles[m.id].textContent) chatBubbles[m.id].remove();
+        delete chatBubbles[m.id];
+        Flow.log('bad', lastError);
+        lastError = '';
+      }
+    }
+    return;
+  }
+
+  if (!ctx || !cfg) return;
+  const view = new DataView(data);
+  const magic = view.getUint32(0, false);
+  if (magic === 0x46484155) {   // "FHAU": audio only. <II> seq, PCM byte count, then PCM
+    const seq = view.getUint32(4, true);
+    if (seq < minSeq) return;   // generated before an interrupt
+    const pcm = new Int16Array(data.slice(12, 12 + view.getUint32(8, true)));
+    const rate = cfg.sample_rate || SR;
+    schedule(seq, pcm, rate, pcm.length / rate, [], false);
+    return;
+  }
+  // "FHRT": audio and JPEG frames, as in v1
+  const seq = view.getUint32(4, true);
+  if (seq < minSeq) return;
+  const frameCount = view.getUint32(12, true);
+  const audioBytes = view.getUint32(16, true);
+  const inferMs = view.getFloat32(20, true);
+  let offset = 28;
+  const pcm = new Int16Array(data.slice(offset, offset + audioBytes));
+  offset += audioBytes;
+  const blobs = [];
+  for (let i = 0; i < frameCount; i++) {
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    blobs.push(new Blob([new Uint8Array(data, offset, length)], { type: 'image/jpeg' }));
+    offset += length;
+  }
+  const bitmaps = await Promise.all(blobs.map(b => createImageBitmap(b)));
+  if (!running || !ctx) { bitmaps.forEach(b => b.close()); return; }
+  const t0 = schedule(seq, pcm, SR, frameCount / (cfg.fps || 25), bitmaps, true);
+  noteVideoChunk(t0 === null ? ctx.currentTime : t0, frameCount / (cfg.fps || 25), t0 === null ? [] : pcm, inferMs);
+}
+
+// Puts one chunk on the WebAudio clock: sound now or right after the previous chunk, frames alongside.
+function schedule(seq, pcm, rate, duration, bitmaps, canSkip) {
+  const now = ctx.currentTime;
+  // Video only: more than two chunks already queued means we fell behind, so skip this one to catch up.
+  if (canSkip && playHead - now > 2.2 * duration) { bitmaps.forEach(b => b.close()); return null; }
+  const t0 = Math.max(playHead, now + 0.06);
+  playHead = t0 + duration;
+
+  if (pcm.length) {
+    const buffer = ctx.createBuffer(1, pcm.length, rate);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 32768;
+    const node = ctx.createBufferSource();
+    node.buffer = buffer;
+    node.connect(outputGain);
+    node.start(t0);
+    scheduled = scheduled.filter(item => item.t0 + item.duration > now - 1);
+    scheduled.push({ seq, node, t0, duration });
+  }
+  const latency = ctx.outputLatency || 0;
+  bitmaps.forEach((bitmap, i) => frames.push({ t: t0 + latency + i / (cfg.fps || 25), bitmap }));
+  audioChunks += 1; audioSeconds += duration;
+  $('s-audio').textContent = audioChunks + '청크 · ' + audioSeconds.toFixed(1) + '초';
+
+  for (const mark of speechStarts[seq] || []) {
+    const sent = speakTimes[mark.id];
+    let delay = null;  // seconds from the end of the question to this sound
+    if (mark.since_utterance_ms != null) delay = mark.since_utterance_ms / 1000 + (t0 + (mark.offset || 0) - now);
+    else if (sent !== undefined) delay = t0 + (mark.offset || 0) - sent;
+    Flow.onAir(mark, delay);
+    if (delay === null) continue;
+    if (mark.phase === 'answer') {
+      const first = $('s-delay').textContent.split(' · 답변')[0];
+      $('s-delay').textContent = first + ' · 답변 ' + delay.toFixed(2) + '초'
+        + (mark.tool_ms != null ? ' (도구 ' + sec(mark.tool_ms) + ')' : '');
+      delete speakTimes[mark.id];
+      continue;
+    }
+    const parts = [];
+    if (mark.speculative) parts.push('미리 준비');
+    if (mark.stt_ms != null) parts.push('인식 ' + sec(mark.stt_ms));
+    if (mark.llm_ms != null) parts.push('생성 ' + sec(mark.llm_ms));
+    if (mark.synth_ms != null) parts.push('합성 ' + sec(mark.synth_ms));
+    $('s-delay').textContent = (mark.phase === 'filler' ? '첫 소리 ' : '') + delay.toFixed(2) + '초' + (parts.length ? ' (' + parts.join(', ') + ')' : '');
+    if (mark.phase !== 'filler') delete speakTimes[mark.id];
+  }
+  delete speechStarts[seq];
+  return t0;
+}
+
+// "unmute" interrupt: stop everything already scheduled and tell the server how far playback got.
+function flushPlayback(firstFreshSeq) {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  let playing = null;
+  for (const item of scheduled) {
+    if (item.t0 <= now && now < item.t0 + item.duration + 0.05) playing = item;  // the latest chunk that has started
+  }
+  ws.send(JSON.stringify({
+    type: 'played',
+    seq: playing ? playing.seq : null,
+    offset: playing ? Math.min(now - playing.t0, playing.duration) : 0,
+  }));
+
+  // fade out over 30 ms instead of cutting the waveform, then give later chunks a fresh gain
+  const fade = 0.03;
+  outputGain.gain.setValueAtTime(1, now);
+  outputGain.gain.linearRampToValueAtTime(0, now + fade);
+  scheduled.forEach(item => { try { item.node.stop(now + fade); } catch (err) { /* already ended */ } });
+  scheduled = [];
+  outputGain = ctx.createGain();
+  outputGain.connect(monitorGain);
+
+  frames.forEach(f => f.bitmap.close());
+  frames = [];
+  playHead = 0;
+  speechStarts = {}; speechSpans = [];
+  minSeq = firstFreshSeq || 0;
+}
+
+function draw() {
+  if (ctx && frames.length) {
+    const now = ctx.currentTime;
+    let latest = null;
+    while (frames.length && frames[0].t <= now) {
+      if (latest) latest.bitmap.close();
+      latest = frames.shift();
+    }
+    if (latest) {
+      g.drawImage(latest.bitmap, 0, 0, canvas.width, canvas.height);
+      latest.bitmap.close();
+    }
+  }
+  paintVideoNode();
+  requestAnimationFrame(draw);
+}
+
+$('toggle').onclick = () => (running ? stop() : start());
+$('restart').onclick = () => restart();
+$('engine-warm').onclick = () => Engines.post('/api/engines/warmup');
+$('engine-unload').onclick = () => Engines.post('/api/engines/unload');
+$('agent').onchange = () => loadAgent();
+$('test').onchange = () => { try { localStorage.setItem(RECORD_KEY, $('test').checked ? '1' : '0'); } catch (err) { /* not remembered */ } };
+$('version').onchange = () => loadDefinition();
+document.querySelectorAll('input[name=channel]').forEach(node => { node.onchange = () => { applyChannel(); Flow.buildLanes(); }; });
+$('send').onclick = () => send();
+['barge', 'interrupt-mode', 'speculative', 'endpoint', 'stt'].forEach(id => { $(id).onchange = sendConfig; });
+$('clear').onclick = () => { if (ws && running) ws.send(JSON.stringify({ type: 'clear' })); };
+$('text').onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+};
+
+function toggleSettings(open) {
+  $('settings').hidden = !open; $('scrim').hidden = !open;
+  if (open) $('close-settings').focus(); else $('open-settings').focus();
+}
+$('open-settings').onclick = () => toggleSettings(true);
+$('close-settings').onclick = () => toggleSettings(false);
+$('scrim').onclick = () => toggleSettings(false);
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (Screen.picking) Screen.closePicker();
+  else if (document.body.classList.contains('order-open')) Screen.sheet(false);
+  else if (!$('settings').hidden) toggleSettings(false);
+});
+$('open-backstage').onclick = () => Screen.dock(!document.body.classList.contains('backstage-open'));
+$('order-bar').onclick = () => Screen.sheet(true);
+$('order-close').onclick = () => Screen.sheet(false);
+$('kscrim').onclick = () => { Screen.closePicker(); Screen.sheet(false); };
+
+window.addEventListener('resize', placeLanes);
+if (window.ResizeObserver) new ResizeObserver(placeLanes).observe($('path'));   // also when the web font arrives or a value wraps
+init();
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# 비서: 웹 작업이 사용자에게 물어본 것(예: 같은 이름의 사람이 둘일 때 누구인지)에 대한 사용자의 답을 넘겨 작업을 이어 간다.
+name: web_task_answer
+description: web_task가 사용자의 답이 필요하다고 한 뒤, 사용자가 실제로 답한 내용을 넘겨 웹 작업을 이어 간다. 사용자가 답하기 전에는 호출하지 않는다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    answer: {type: string, description: "사용자가 한 답. 예: 영업팀 김민수 부장"}
+  required: [answer]
+output_schema:
+  type: object
+  properties:
+    status: {type: string, enum: [done, asked, confirm, declined]}
+    task_id: {type: string}
+timeout_s: 20.0
+retries: 0
+filler: "네, 이어서 진행할게요."
+adapter: {kind: http, target: "http://127.0.0.1:7895/answer"}

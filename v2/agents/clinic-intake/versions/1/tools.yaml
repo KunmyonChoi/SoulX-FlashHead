@@ -1,0 +1,7 @@
+# 계약서는 v2/tools/<묶음>/<이름>.yaml, 연결되는 곳은 더미 의원이다.
+#   조회: find_patient(재진/초진, 잡힌 예약), list_available_slots(빈 시간)
+#   변경, 환자 동의 필요(두 단계): book_appointment, cancel_appointment
+#   직원 연결: handoff_to_human
+# 도구 묶음(v2/tools/<묶음>/): 아래 이름은 이 묶음들 안에서 찾는다
+tool_packs: [clinic, common]
+tools: [find_patient, list_available_slots, book_appointment, cancel_appointment, handoff_to_human]

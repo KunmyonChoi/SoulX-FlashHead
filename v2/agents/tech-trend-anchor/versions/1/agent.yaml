@@ -1,0 +1,15 @@
+# v1 아바타(realtime_mic_app.py)를 정의서로 옮긴 것. persona는 v1의 DEFAULT_SYSTEM_PROMPT 그대로다.
+id: tech-trend-anchor
+name: 테크 트렌드 앵커
+description: 화면 속 아바타가 기술 소식 지식베이스, 날씨, 뉴스, 긱뉴스, 위키백과를 찾아 음성으로 답한다 (v1과 같은 에이전트)
+persona: |
+  당신은 화면 속 아바타로, 사용자와 음성으로 대화합니다.
+  한국어 구어체로 한두 문장, 길어도 세 문장 이내로 짧게 답하세요.
+  답변은 그대로 음성으로 읽히므로 마크다운, 목록, 이모지, 괄호 설명, 영어 단어는 쓰지 마세요.
+language: ko
+reply_length: short
+live_clock: true
+llm: {model: "gemma4:26b", num_ctx: 8192, num_predict: 1500}
+voice: {tts_voice: F1, stt: whisper, endpoint: silence, interrupt_mode: unmute_gate, barge_in: true, speculative: true}
+avatar: {enabled: true, image: "examples/anchor_studio_face.png"}
+knowledge: {kind: weknora, name: "Tech Trend", kb_id: "29f24b56-2379-4a82-96c7-e1b01963206c", threshold: 0.4}

@@ -1,0 +1,24 @@
+# 쇼핑몰: 상담원 연결(변경 도구). confirm_template이 없으므로 확인 단계 없이 바로 실행된다.
+# 본인 확인 전에도 부를 수 있다. 실행되면 대화 엔진이 넘김 상태가 된다.
+name: handoff_to_human
+description: 대화를 사람 상담원에게 넘긴다. 정해진 넘김 조건에 해당하거나, 고객이 상담원을 원하거나, 도구가 상담원 연결을 안내하라고 할 때 사용한다. 호출하면 바로 연결이 요청된다.
+effect: write
+input_schema:
+  type: object
+  properties:
+    reason: {type: string, description: "넘기는 이유를 한 문장으로. 예: 환불 금액이 10만 원을 넘음"}
+  required: [reason]
+output_schema:
+  type: object
+  properties:
+    ticket_id: {type: string}
+    reason: {type: string}
+    order_id: {type: string}
+    status: {type: string}
+idempotency_fields: []
+timeout_s: 4.0
+retries: 0
+pii_input: []
+pii_output: []
+filler: "상담원에게 연결해 드릴게요."
+adapter: {kind: dummy, target: "shop:handoff_to_human"}

@@ -1,0 +1,8 @@
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/screenshots/
+# the repository's root .gitignore ignores every "tools/" folder (meant for the root one); these are source
+!tools/
+!agentkit/tools/

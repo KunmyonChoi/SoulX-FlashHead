@@ -1,0 +1,21 @@
+# 카페(키오스크): 지금 주문 내역(조회 도구). 결과는 고객 화면의 주문 내역 영역을 통째로 바꾼다(display: cart).
+# 장바구니를 바꾸는 도구들이 화면을 다시 그릴 때(refresh) 이 도구를 인자 없이 부른다.
+name: get_cart
+description: 지금까지 담은 주문 내역과 합계를 가져온다. 고객이 무엇을 담았는지 묻거나, 뺄 줄의 번호(line_id)를 알아야 할 때 사용한다. 인자는 없다. 주문 내역은 고객 화면에 표시되므로 전체를 말로 읽지 않는다.
+effect: read
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties:
+    lines: {type: array, description: "[{line_id, item_id, name, options, quantity, unit_price, line_total}]"}
+    subtotal: {type: integer, description: "할인 전 금액(원)"}
+    discount: {type: integer, description: "쿠폰 할인(원)"}
+    total: {type: integer, description: "결제할 금액(원)"}
+    coupon: {type: string, description: "적용된 쿠폰 코드. 없으면 null"}
+timeout_s: 4.0
+retries: 1
+filler: "주문 내역을 확인할게요."
+display: {kind: cart}
+adapter: {kind: dummy, target: "cafe:get_cart"}

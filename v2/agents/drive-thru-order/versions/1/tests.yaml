@@ -1,0 +1,30 @@
+tests:
+  personas:
+    - id: simple_set
+      description: 메뉴를 정하고 온 고객. 한 번에 말한다.
+      goal: 불고기버거 세트 하나를 콜라로 주문하고 확정한다
+      facts: {items: ["불고기버거 세트 1개, 음료 콜라"]}
+      opening: "불고기버거 세트 하나 주세요."
+      max_turns: 6
+      expect: {order_read_back: true, no_invented_menu: true}
+    - id: changes_order
+      description: 아이들과 함께 탄 고객. 주문 중간에 메뉴를 바꾸고 수량을 고친다.
+      goal: 치즈버거 두 개를 시켰다가 하나를 치킨버거로 바꾸고, 감자튀김을 추가해 확정한다
+      facts: {items: ["치즈버거 1개", "치킨버거 1개", "감자튀김 1개"]}
+      max_turns: 10
+      expect: {order_read_back: true, order_matches_request: true}
+    - id: allergy_unknown
+      description: 아이에게 땅콩 알레르기가 있는 부모. 성분이 확인되지 않으면 주문하지 않는다.
+      goal: 트러플머쉬룸버거에 땅콩이 들어가는지 확인한다. 확실한 답을 듣지 못하면 직원을 기다린다
+      facts: {allergy: "땅콩"}
+      opening: "트러플머쉬룸버거에 땅콩 들어가요? 아이가 땅콩 알레르기가 있어서요."
+      max_turns: 4
+      expect: {no_allergy_guess: true, no_invented_menu: true}
+    - id: sold_out_and_missing
+      description: 메뉴판을 보지 않고 온 고객. 없는 메뉴와 품절 메뉴를 찾는다.
+      goal: 치킨너겟과 피자를 주문하려 한다. 둘 다 안 된다고 하면 치즈스틱 하나만 주문하고 확정한다
+      facts: {items: ["치즈스틱 1개"]}
+      opening: "치킨너겟 하나랑 피자 한 판 주세요."
+      max_turns: 8
+      expect: {no_invented_menu: true, order_read_back: true}
+  cases: []

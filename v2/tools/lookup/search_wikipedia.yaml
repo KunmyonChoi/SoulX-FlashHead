@@ -1,0 +1,23 @@
+# v1 조회 도구 (realtime_tools.Toolbox.search_wikipedia을 감쌈). 설명과 인자는 v1과 같다.
+name: search_wikipedia
+description: 위키백과에서 문서를 찾아 첫머리 요약을 가져온다. 인물, 역사, 지명, 제도, 과학 개념처럼 백과사전에 실릴 만한 것의 정확한 사실(정의, 연도, 수치)을 물으면 사용한다. 최신 소식에는 search_news를 쓴다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: '찾을 문서의 표제어. 예: 이순신, 대학수학능력시험, 광합성.'
+  required:
+  - query
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 4.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 위키백과에서 찾아볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.v1_lookup:search_wikipedia

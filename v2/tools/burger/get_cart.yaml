@@ -1,0 +1,17 @@
+# 드라이브스루: 주문서 보기(조회).
+name: get_cart
+description: 지금 주문서의 내용과 합계 금액을 본다. 주문을 확정하기 전에 읽어 줄 때, 고객이 지금까지 주문한 것을 물을 때 호출한다. 인자는 없다.
+effect: read
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties:
+    lines: {type: array, description: "[{item_id, name, quantity, unit_price, line_total, set, drink_name, large}]"}
+    total: {type: integer, description: "합계(원)"}
+    summary: {type: string}
+timeout_s: 4.0
+retries: 1
+filler: "주문서를 확인할게요."
+adapter: {kind: python, target: "agentkit.dummy.burger:get_cart"}

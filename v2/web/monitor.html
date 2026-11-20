@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>모니터 · 음성 에이전트</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/web/app.css?v=screen7">
+</head>
+<body class="page-monitor">
+<header class="bar">
+  <div class="brand">음성 에이전트</div>
+  <nav class="nav" id="nav" aria-label="화면"></nav>
+  <div class="tabs" role="tablist" aria-label="모니터 보기">
+    <button role="tab" id="tab-sessions" aria-selected="true" aria-controls="view-sessions">대화</button>
+    <button role="tab" id="tab-trend" aria-selected="false" aria-controls="view-trend">추세</button>
+    <button role="tab" id="tab-asr" aria-selected="false" aria-controls="view-asr">인식 품질</button>
+  </div>
+  <div class="bar-right"><span class="state" id="live-state" title="새 대화와 턴이 생기면 새로고침 없이 반영됩니다">실시간 연결 중</span></div>
+</header>
+
+<main class="mon" id="view-sessions" role="tabpanel" aria-labelledby="tab-sessions">
+  <aside class="panel mon-list" aria-label="대화 목록">
+    <header><h2>대화 목록</h2><small class="muted" id="list-count"></small><span class="spacer"></span>
+      <button class="ghost small" id="reload">새로 고침</button></header>
+    <div class="filters">
+      <label>에이전트 <select id="f-agent"><option value="">모든 에이전트</option></select></label>
+      <label>상태 <select id="f-status"><option value="">모두</option><option value="active">진행 중</option><option value="completed">끝남</option>
+        <option value="handoff">상담원 연결</option><option value="abandoned">중단됨</option><option value="error">오류</option></select></label>
+      <label>채널 <select id="f-channel"><option value="">모두</option><option value="text">글</option><option value="voice">음성</option><option value="avatar">아바타</option></select></label>
+      <label>종류 <select id="f-kind"><option value="">모두</option><option value="live">운영 대화</option><option value="test">시험 세션</option><option value="sim">가상 고객</option></select></label>
+      <label title="시스템이 인식을 의심했거나 사람이 잘못 알아들었다고 표시한 턴이 있는 대화만 봅니다.">인식 <select id="f-asr"><option value="">모두</option><option value="any">의심되거나 표시된 턴 있음</option><option value="marked">사람이 표시한 오인식 있음</option></select></label>
+    </div>
+    <div id="list-state"></div>
+    <ol id="sessions"></ol>
+  </aside>
+
+  <section class="mon-main" id="detail" aria-label="대화 상세">
+    <div class="full" id="detail-state"></div>
+    <div class="panel full" id="sess-head" hidden></div>
+    <div id="turns"></div>
+    <aside class="panel" id="analysis" hidden aria-label="대화 분석"></aside>
+  </section>
+</main>
+
+<main class="trend" id="view-trend" role="tabpanel" aria-labelledby="tab-trend" hidden>
+  <div class="filters" style="margin:0">
+    <label>에이전트 <select id="t-agent"><option value="">모든 에이전트</option></select></label>
+    <label>기간 <select id="t-days"><option value="7">최근 7일</option><option value="14">최근 14일</option><option value="30">최근 30일</option></select></label>
+  </div>
+  <div class="panel"><h2>에이전트와 버전별 지표 <small>같은 에이전트의 바로 앞 버전과 비교합니다</small></h2><div id="trend-table"></div></div>
+  <div class="panel" id="trend-chart-panel"><h2>날짜별 응답 지연 중앙값 <small>말이 끝난 뒤 답이 시작되기까지</small></h2><div id="trend-chart" class="chart"></div></div>
+  <div class="panel" id="trend-asr-panel" hidden><h2>음성 인식 품질과 기다리라고만 한 턴 <small>비율은 낮을수록 좋습니다</small></h2><div id="trend-asr"></div></div>
+</main>
+
+<main class="asrq" id="view-asr" role="tabpanel" aria-labelledby="tab-asr" hidden>
+  <div class="filters" style="margin:0">
+    <label>에이전트 <select id="a-agent"><option value="">모든 에이전트</option></select></label>
+  </div>
+  <div class="panel">
+    <header><h2>인식 사례</h2><small class="muted" id="case-count"></small><span class="spacer"></span>
+      <button class="small" id="bench-run" disabled title="사례의 음성을 인식 모델마다 다시 넣어 보고 실제 한 말과 비교합니다.">다시 돌려 비교</button></header>
+    <p class="muted" style="font-size:13px;margin-bottom:6px">잘못 알아들었다고 표시한 턴의 음성, 실제로 한 말, 그때 인식된 글입니다. 인식 모델을 바꿔 볼 때 같은 음성으로 비교하는 기준이 됩니다.</p>
+    <div id="cases"></div>
+  </div>
+  <div class="panel"><h2>인식 모델 비교</h2><div id="bench"></div></div>
+  <div class="panel"><h2>지난 비교</h2><div id="bench-runs"></div></div>
+</main>
+
+<script src="/web/common.js?v=screen8"></script>
+<script>
+'use strict';
+const narrow = window.matchMedia('(max-width: 980px)');
+let agents = [], agentName = {};
+let sessions = [];              // normalised list rows
+let current = null;             // session id shown on the right
+let detail = null;              // {meta, status, turns, spans}
+let definitionCache = {};       // "agent/version" -> AgentDefinition | null
+let turnCards = {};             // turn number -> {node, sig}
+let analysisState = { sid: null, result: null };
+let pollTimer = null, listTimer = null, detailTimer = null, liveSource = null;
+
+// ---- session list ------------------------------------------------------------------------------
+function normSession(raw) {
+  const m = raw.meta || raw;
+  const pick = (...values) => values.find(v => v !== undefined && v !== null);
+  const analysis = raw.analysis || {};
+  return {
+    id: m.session_id, agent: m.agent_id, version: m.version, channel: m.channel, test: !!m.test, simulated: !!m.simulated,
+    label: m.label || '', started: m.started_at, ended: pick(raw.ended_at, m.ended_at),
+    status: raw.status || m.status || 'active',
+    turns: Array.isArray(raw.turns) ? raw.turns.length : pick(raw.turns, raw.turn_count, raw.n_turns),
+    median: pick(raw.response_ms_median, raw.latency_ms_median, raw.median_ms),
+    // WP3 sends a summary object {passed, failed, total, all_passed, safety_failed}; a bare boolean is accepted too
+    passed: typeof analysis.total === 'number' ? (analysis.failed > 0 ? false : analysis.total > 0 ? true : undefined)
+      : pick(raw.analysis_passed, typeof raw.passed === 'boolean' ? raw.passed : undefined),
+    safetyFailed: !!analysis.safety_failed, unjudged: analysis.unjudged || 0,
+    // not in ASR_QUALITY.md: the list row is expected to carry asr: {suspect_turns, misheard_turns}
+    suspect: pick((raw.asr || {}).suspect_turns, raw.suspect_turns, 0), misheard: pick((raw.asr || {}).misheard_turns, raw.misheard_turns, 0),
+  };
+}
+
+function passBadge(passed, s) {
+  if (passed === true) return badge('기준 통과', 'b-back', s && s.unjudged ? '판정하지 못한 기준 ' + s.unjudged + '개' : '');
+  if (passed === false) return s && s.safetyFailed ? badge('안전 기준 실패', 'b-safety') : badge('기준 실패', 'b-live');
+  return badge('분석 없음', '', '아직 분석 결과가 없습니다');
+}
+
+function sessionRow(s, fresh) {
+  return el('li', {}, el('button', { class: 'sess' + (fresh ? ' fresh' : ''), 'data-sid': s.id, 'aria-current': s.id === current ? 'true' : null,
+    onclick: () => openSession(s.id) },
+    el('div', { class: 'l1' }, el('b', {}, agentName[s.agent] || s.agent || '(에이전트 없음)'),
+      badge(STATUS_LABEL[s.status] || s.status, STATUS_CLASS[s.status]), passBadge(s.passed, s)),
+    el('div', { class: 'l2' },
+      el('span', {}, 'v' + s.version), el('span', {}, CHANNEL_LABEL[s.channel] || s.channel), el('span', {}, clock(s.started)),
+      el('span', {}, (s.turns === undefined ? '-' : s.turns) + '턴'),
+      s.median !== undefined ? el('span', {}, '지연 중앙값 ' + sec(s.median)) : null,
+      s.simulated ? el('span', {}, '가상 고객' + (s.label ? ' ' + s.label : '')) : s.test ? el('span', {}, '시험 세션') : null,
+      s.misheard ? el('span', { class: 'asr-mark marked', title: '사람이 잘못 알아들었다고 표시한 턴' }, '● 오인식 표시 ' + s.misheard + '턴') : null,
+      s.suspect ? el('span', { class: 'asr-mark', title: '시스템이 의심한 턴 (낮은 신뢰도, 같은 말 반복, 되물음, 불만 표현, 기다리라고만 함)' }, '? 의심 ' + s.suspect + '턴') : null)));
+}
+
+function visibleSessions() {
+  const ch = $('f-channel').value, kind = $('f-kind').value, asr = $('f-asr').value;
+  return sessions.filter(s => (!ch || s.channel === ch) && (!asr || (asr === 'marked' ? s.misheard > 0 : s.misheard > 0 || s.suspect > 0))
+    && (!kind || (kind === 'sim' ? s.simulated : kind === 'test' ? (s.test && !s.simulated) : (!s.test && !s.simulated))));
+}
+
+function renderList(freshIds) {
+  const rows = visibleSessions();
+  $('list-count').textContent = rows.length ? rows.length + '건' : '';
+  setKids($('sessions'), ...rows.map(s => sessionRow(s, freshIds && freshIds.has(s.id))));
+  if (!rows.length) {
+    const filtered = $('f-agent').value || $('f-status').value || $('f-channel').value || $('f-kind').value || $('f-asr').value;
+    stateView($('list-state'), 'empty', filtered
+      ? { title: '조건에 맞는 대화가 없습니다', hint: '위의 조건을 "모두"로 바꿔 보세요.' }
+      : { title: '아직 기록된 대화가 없습니다', hint: '대화 화면에서 에이전트와 한 번 대화하면 여기에 나타납니다.', action: el('a', { href: '/' }, '대화 화면 열기') });
+  } else {
+    $('list-state').replaceChildren();
+  }
+}
+
+async function loadList(quiet) {
+  if (!quiet) { $('sessions').replaceChildren(); stateView($('list-state'), 'loading', { title: '대화 목록을 불러오는 중입니다' }); }
+  let raw;
+  try {
+    raw = await api('/api/sessions' + qs({ agent: $('f-agent').value, status: $('f-status').value, limit: 100 }));
+  } catch (err) {
+    if (quiet && sessions.length) return;   // keep what is on screen; the live indicator already says the server is away
+    $('sessions').replaceChildren(); $('list-count').textContent = '';
+    errorView($('list-state'), err, '대화 기록', () => loadList());
+    if (!current) stateView($('detail-state'), 'empty', { center: true, title: '대화 목록을 받지 못했습니다', hint: '왼쪽의 안내를 확인하세요.' });
+    return;
+  }
+  const before = new Set(sessions.map(s => s.id));
+  sessions = asList(raw, 'sessions').map(normSession).filter(s => s.id).sort((a, b) => (b.started || 0) - (a.started || 0));
+  renderList(quiet ? new Set(sessions.filter(s => !before.has(s.id)).map(s => s.id)) : null);
+  if (!current && !narrow.matches) {
+    const want = new URLSearchParams(location.search).get('session');
+    const first = visibleSessions()[0];
+    if (want) openSession(want); else if (first) openSession(first.id);
+    else stateView($('detail-state'), 'empty', { center: true, title: '볼 대화가 없습니다', hint: '대화가 생기면 턴 카드와 분석이 여기에 나옵니다.' });
+  }
+}
+
+// ---- session detail ----------------------------------------------------------------------------
+async function definitionOf(agent, version) {
+  const key = agent + '/' + version;
+  if (!(key in definitionCache)) {
+    try {
+      const body = await api('/api/agents/' + encodeURIComponent(agent) + '/versions/' + version);
+      definitionCache[key] = (body && body.definition) || body;
+    } catch (err) { definitionCache[key] = null; }
+  }
+  return definitionCache[key];
+}
+
+async function openSession(sid) {
+  current = sid;
+  detail = null; turnCards = {};
+  clearTimeout(pollTimer);
+  document.body.classList.add('detail-open');
+  history.replaceState(null, '', location.pathname + qs({ session: sid }));
+  document.querySelectorAll('.sess').forEach(b => b.setAttribute('aria-current', b.dataset.sid === sid ? 'true' : 'false'));
+  $('sess-head').hidden = true; $('analysis').hidden = true; $('turns').replaceChildren();
+  stateView($('detail-state'), 'loading', { title: '대화를 불러오는 중입니다' });
+  await loadDetail(false);
+  if (current === sid && detail) loadAnalysis(sid);
+}
+
+function closeDetail() {
+  current = null; detail = null;
+  document.body.classList.remove('detail-open');
+  history.replaceState(null, '', location.pathname);
+  renderList();
+}
+
+async function loadDetail(quiet) {
+  const sid = current;
+  if (!sid) return;
+  let body;
+  try {
+    body = await api('/api/sessions/' + encodeURIComponent(sid));
+  } catch (err) {
+    if (current !== sid || (quiet && detail)) return;
+    const back = el('button', { class: 'ghost small only-narrow', onclick: closeDetail }, '대화 목록으로');
+    if (err.kind === 'notfound' || (err.kind === 'missing' && sessions.length)) {
+      stateView($('detail-state'), 'empty', { title: '이 대화를 찾을 수 없습니다',
+        hint: '세션 ' + sid + '의 기록이 없습니다. 보관 기한이 지나 지워졌을 수 있습니다.', action: back });
+    } else {
+      errorView($('detail-state'), err, '대화 기록', () => loadDetail(false)).append(back);
+    }
+    return;
+  }
+  if (current !== sid) return;
+  const meta = body.meta || {};
+  detail = { meta, status: body.status || meta.status || 'active', turns: body.turns || [], spans: body.spans || [],
+    audio: Array.isArray(body.audio) ? body.audio : null };
+  // turn 0 is the opening (docs/DISPLAY.md): what the agent showed and said before the customer spoke.
+  // If the store has its spans but no turn record, the card is made from the spans.
+  const early = detail.spans.filter(x => x.turn === 0);
+  if (early.length && !detail.turns.some(t => t.turn === 0)) {
+    detail.turns = [{ session_id: sid, turn: 0, user_text: '', agent_text: '', t_user_end: Math.min(...early.map(x => x.t_start)),
+      t_agent_start: null, t_agent_end: null, interrupted: false, handoff: false }].concat(detail.turns);
+  }
+  const definition = await definitionOf(meta.agent_id, meta.version);
+  if (current !== sid) return;
+  detail.definition = definition;
+  detail.budget = definition && definition.evaluation && definition.evaluation.latency_budget_ms;
+  $('detail-state').replaceChildren();
+  renderHead();
+  renderTurns(quiet);
+}
+
+const latencyOf = t => t.turn !== 0 && t.t_agent_start ? Math.max(0, (t.t_agent_start - t.t_user_end) * 1000) : null;   // the opening answers nobody
+const POINT_KINDS = ['output', 'interrupt', 'handoff', 'display', 'action'];   // moments, drawn as ticks on the latency bar
+const median = list => { const s = list.slice().sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
+
+function renderHead() {
+  const m = detail.meta, budget = detail.budget || 2500;
+  const lat = detail.turns.map(latencyOf).filter(v => v !== null);
+  const over = lat.filter(v => v > budget).length;
+  const kindsUsed = KINDS.filter(k => detail.spans.some(s => s.kind === k));
+  $('sess-head').hidden = false;
+  setKids($('sess-head'), el('div', { class: 'sess-head' },
+    el('button', { class: 'ghost small only-narrow', onclick: closeDetail }, '← 대화 목록'),
+    el('h2', {}, agentName[m.agent_id] || m.agent_id),
+    badge(STATUS_LABEL[detail.status] || detail.status, STATUS_CLASS[detail.status]),
+    badge('v' + m.version), badge(CHANNEL_LABEL[m.channel] || m.channel),
+    m.simulated ? badge('가상 고객' + (m.label ? ' ' + m.label : ''), 'b-out') : m.test ? badge('시험 세션 (녹음됨)', 'b-out') : null,
+    el('div', { class: 'meta' },
+      '세션 ' + m.session_id + ' · ' + clock(m.started_at) + ' 시작 · ' + detail.turns.filter(t => t.turn !== 0).length + '턴'
+      + (lat.length ? ' · 응답 지연 중앙값 ' + sec(median(lat)) : '')
+      + ' · 지연 기준 ' + sec(budget) + (detail.budget ? '' : ' (정의서를 받지 못해 기본값)')
+      + (over ? ' · 기준을 넘은 턴 ' + over + '개' : ''))),
+    kindsUsed.length ? el('div', { class: 'klegend', 'aria-label': '지연 막대의 색' },
+      kindsUsed.map(k => el('span', { style: '--c: var(--k-' + k + ')', class: POINT_KINDS.includes(k) ? 'tick' : '' }, KIND_LABEL[k])),
+      el('span', { class: 'tick', style: '--c: var(--muted)' }, '지연 기준 (점선)')) : null);
+}
+
+function turnWindow(turn, spans) {
+  const starts = spans.map(s => s.t_start), ends = spans.map(s => s.t_end);
+  const t0 = Math.min(turn.t_user_end, ...starts);
+  const t1 = Math.max(turn.t_user_end, turn.t_agent_start || 0, turn.t_agent_end || 0, ...ends);
+  return [t0, t1];
+}
+
+function renderTurns(quiet) {
+  const budget = detail.budget || 2500;
+  const byTurn = {};
+  detail.spans.forEach(s => { (byTurn[s.turn] = byTurn[s.turn] || []).push(s); });
+  const scale = Math.max(1, ...detail.turns.map(t => { const [a, b] = turnWindow(t, byTurn[t.turn] || []); return b - a; }));
+  const box = $('turns');
+  if (!detail.turns.length) {
+    turnCards = {};
+    stateView(box, 'empty', { title: '아직 턴이 없습니다',
+      hint: detail.status === 'active' ? '고객이 첫 말을 하면 여기에 턴 카드가 나타납니다.' : '고객이 말하기 전에 끝난 대화입니다.' });
+    return;
+  }
+  if (box.querySelector('.stateview')) box.replaceChildren();
+  detail.turns.slice().sort((a, b) => a.turn - b.turn).forEach(turn => {
+    const spans = (byTurn[turn.turn] || []).slice().sort((a, b) => a.t_start - b.t_start);
+    const mk = () => JSON.stringify([turn, spans.length, spans.length ? spans[spans.length - 1].t_end : 0, scale, budget]);
+    const sig = mk();
+    const had = turnCards[turn.turn];
+    if (had && had.sig === sig) return;
+    const open = had && had.node.querySelector('details.more') && had.node.querySelector('details.more').open;
+    const node = turnCard(turn, spans, scale, budget, open);
+    if (had) had.node.replaceWith(node); else { box.append(node); if (quiet) node.classList.add('flash'); }
+    turnCards[turn.turn] = { node, sig, mk };
+  });
+}
+
+function turnCard(turn, spans, scale, budget, open) {
+  const lat = latencyOf(turn), over = lat !== null && lat > budget;
+  const [t0] = turnWindow(turn, spans);
+  const x = t => Math.max(0, Math.min(100, (t - t0) / scale * 100));
+  const tools = spans.filter(s => s.kind === 'tool' && !(s.attrs || {}).refresh_of);   // a refresh is part of the call before it
+  const out = s => s.output || {};
+  const opening = turn.turn === 0, touches = spans.filter(s => s.kind === 'action'), shown = spans.filter(s => s.kind === 'display');
+  const chips = [
+    touches.length ? badge('화면 터치', 'b-touch', '고객이 말하지 않고 화면을 눌러서 한 턴입니다') : null,
+    shown.length ? badge('화면 표시 ' + shown.length + '건', '', shown.map(s => DISPLAY_LABEL[s.name] || s.name).join(', ')) : null,
+    tools.length ? badge('도구 ' + tools.length + '회') : null,
+    tools.some(s => s.ok === false) ? badge('도구 실패', 'b-live') : null,
+    tools.some(s => out(s).needs_confirmation) ? badge('변경 전 동의 대기', 'b-out') : null,
+    tools.some(s => (s.attrs || {}).executed || out(s).executed) ? badge('변경 실행됨', 'b-back') : null,
+    spans.some(s => s.kind === 'guard') ? badge('검사에 걸린 문장', 'b-safety') : null,
+    turn.interrupted ? badge('고객이 끼어듦', 'b-out') : null,
+    turn.handoff ? badge('상담원에게 넘김', 'b-live') : null,
+    flagsOf(turn).auto.map(f => badge(FLAG_LABEL[f] || f, 'b-suspect', FLAG_HINT[f] || '시스템이 의심한 턴')),
+  ];
+  const markChip = el('span', { class: 'mark-chip' });
+  const bar = el('div', { class: 'lbar', role: 'img',
+    'aria-label': '구간별 지연: ' + spans.map(s => (KIND_LABEL[s.kind] || s.kind) + ' ' + sec((s.t_end - s.t_start) * 1000)).join(', ') });
+  spans.forEach(s => {
+    const point = POINT_KINDS.includes(s.kind);
+    const cls = point ? 'tick' : s.kind === 'tts' ? 'r2' : 'r1';
+    bar.append(el('i', { class: cls + (s.ok === false ? ' failed' : ''),
+      style: '--c: var(--k-' + s.kind + '); left: ' + x(s.t_start).toFixed(2) + '%;' + (point ? '' : ' width: ' + Math.max(0.3, x(s.t_end) - x(s.t_start)).toFixed(2) + '%'),
+      title: (KIND_LABEL[s.kind] || s.kind) + (s.name ? ' ' + s.name : '') + ' · ' + (point ? '+' + sec((s.t_start - turn.t_user_end) * 1000) : sec((s.t_end - s.t_start) * 1000)) }));
+  });
+  if (!opening) bar.append(el('span', { class: 'budget', style: 'left: ' + x(turn.t_user_end + budget / 1000).toFixed(2) + '%', title: '지연 기준 ' + sec(budget) }));
+
+  const m = detail.meta, hasAudio = (m.test || m.simulated) && m.channel !== 'text';
+  const stored = role => !detail.audio || detail.audio.some(a => a.turn === turn.turn && a.role === role);
+  const audio = role => hasAudio && stored(role) ? el('audio', { controls: true, preload: 'none',
+    src: '/api/sessions/' + encodeURIComponent(m.session_id) + '/audio/' + turn.turn + '/' + role,
+    'aria-label': turn.turn + '번 턴 ' + (role === 'user' ? '고객' : '에이전트') + ' 음성',
+    onerror: e => e.target.replaceWith(el('span', { class: 'muted', style: 'font-size:12.5px' }, '저장된 음성이 없습니다')) }) : null;
+
+  const more = el('details', { class: 'more', open: open || null },
+    el('summary', {}, '단계별로 보기 (' + spans.length + '구간)'));
+  const fill = () => { if (!more.querySelector('.spans')) more.append(el('ol', { class: 'spans' }, spans.map(s => spanItem(s, turn)))); };
+  more.addEventListener('toggle', () => { if (more.open) fill(); });
+  if (open) fill();
+
+  // what the recogniser reported about this utterance, in one line under the recognised text
+  const stt = spans.find(s => s.kind === 'stt'), endpoint = spans.find(s => s.kind === 'endpoint');
+  let asrLine = null;
+  if (stt) {
+    const a = stt.attrs || {}, e = (endpoint && endpoint.attrs) || {};
+    const lowLog = a.avg_logprob != null && a.avg_logprob < -0.8;
+    asrLine = el('div', { class: 'asr-line' }, [
+      '인식 ' + (ENGINE_LABEL[a.engine] || a.engine || ''),
+      a.avg_logprob != null ? ['확신도 ' + Number(a.avg_logprob).toFixed(2), lowLog ? el('b', {}, ' 낮음') : ''] : null,
+      a.low_confidence && !lowLog ? el('b', {}, '신뢰도 낮음') : null,
+      a.rms_db != null ? '소리 크기 ' + Number(a.rms_db).toFixed(1) + ' dBFS' : null,
+      a.audio_s != null ? '길이 ' + Number(a.audio_s).toFixed(1) + '초' : null,
+      endpoint ? '말 끝 판단: ' + (e.mode === 'smart' ? 'Smart Turn' : '조용함') + (e.silence_s != null ? ' ' + e.silence_s + '초' : '')
+        + (e.probability != null ? ', 끝났을 확률 ' + Number(e.probability).toFixed(2) : '') : null,
+    ].filter(x => x !== null).flatMap((part, i) => i ? [' · ', part] : [part]));
+  }
+  const userAudio = audio('user');
+  let card = null;
+  const paintMark = () => {
+    const f = flagsOf(turn);
+    setKids(markChip, f.misheard === true ? badge('오인식으로 표시됨', 'b-misheard', '사람이 잘못 알아들었다고 표시한 턴입니다') : null);
+    if (card) { card.classList.toggle('misheard', f.misheard === true); card.classList.toggle('suspect', f.misheard !== true && f.auto.length > 0); }
+  };
+  const control = m.channel !== 'text' && !opening && !touches.length ? mishearControl({ sid: m.session_id, turn: turn.turn, said: turn.user_text, flags: flagsOf(turn), recorded: !!userAudio,
+    onChange: flags => {
+      turn.flags = flags;
+      paintMark();
+      const entry = turnCards[turn.turn];
+      if (entry) entry.sig = entry.mk();   // already on screen: the next refresh need not rebuild this card
+      loadList(true);
+    } }) : null;
+
+  card = el('article', { class: 'turn' + (over ? ' over' : ''), id: 'turn-' + turn.turn, 'data-turn': turn.turn, tabindex: '-1' },
+    el('div', { class: 'turn-head' }, el('b', {}, opening ? '시작' : turn.turn + '번 턴'), markChip, chips,
+      el('span', { class: 'lat' }, opening ? '고객이 말하기 전' : lat === null ? '응답 없음' : over ? '기준 ' + sec(budget) + ' 초과: ' + sec(lat) : '응답까지 ' + sec(lat))),
+    el('dl', { class: 'said' },
+      opening ? null : [el('dt', {}, touches.length ? '고객 (터치)' : '고객'),
+        el('dd', { class: touches.length ? 'touched' : '' }, el('div', { class: 'heard' }, el('span', {}, touches.length ? touches.map(touchText).join(', ') : turn.user_text || ''), userAudio),
+          touches.length && turn.user_text ? el('div', { class: 'asr-line' }, '대화 기록에는 이렇게 남음: ' + turn.user_text) : null, asrLine, control ? control.node : null)],
+      el('dt', {}, '에이전트'), el('dd', { class: turn.agent_text ? '' : 'none' }, turn.agent_text || (opening ? '(여는 말 없음)' : '(답하지 않음)'),
+        turn.interrupted ? el('span', { class: 'muted' }, ' (끼어들어 여기까지만 들림)') : null, audio('agent'))),
+    bar,
+    el('div', { class: 'lbar-cap' }, el('span', {}, opening ? '대화 시작' : touches.length ? '터치' : '말 끝'), el('span', {}, '막대 전체 ' + scale.toFixed(1) + '초')),
+    spans.length ? more : el('div', { class: 'muted', style: 'font-size:13px;margin-top:8px' }, '이 턴에는 구간 기록이 없습니다.'));
+  paintMark();
+  return card;
+}
+
+// What a touch did, in words: "add_item: vanilla_latte 1개 (temperature hot)".
+function touchText(s) {
+  const args = (s.input && s.input.arguments) || {}, options = Object.entries(args.options || {}).map(([k, v]) => k + ' ' + v);
+  const what = args.item_id || args.line_id || '';
+  const rest = Object.entries(args).filter(([k]) => !['item_id', 'line_id', 'quantity', 'options'].includes(k)).map(([k, v]) => k + ' ' + (typeof v === 'string' ? v : JSON.stringify(v)));
+  return (s.name || '동작') + (what ? ': ' + what : '') + (args.quantity != null ? ' ' + args.quantity + '개' : '')
+    + (options.length || rest.length ? ' (' + options.concat(rest).join(', ') + ')' : '');
+}
+
+function spanItem(s, turn) {
+  const a = s.attrs || {}, input = s.input || {}, output = s.output || {};
+  const ms = (s.t_end - s.t_start) * 1000;
+  const lines = [], chips = [];
+  const q = text => el('q', {}, String(text));
+  const line = (...parts) => lines.push(el('div', { class: 'line' }, ...parts));
+  if (s.kind === 'endpoint') {
+    line('방식 ' + (a.mode === 'smart' ? 'Smart Turn' : '고정 침묵') + (a.silence_s != null ? ', ' + a.silence_s + '초 조용함' : '')
+      + (a.probability != null ? ', 끝났을 확률 ' + Number(a.probability).toFixed(2) : ''));
+  } else if (s.kind === 'stt') {
+    line('들은 글: ', q(output.text || ''));
+    line((ENGINE_LABEL[a.engine] || a.engine || '') + (a.language ? ' · ' + (a.language === 'en' ? '영어' : '한국어') : ''));
+    // how sure the recogniser was. The limits are the ones docs/ASR_QUALITY.md uses for low_confidence.
+    const low = (bad, ...parts) => lines.push(el('div', { class: 'line' + (bad ? ' low' : '') }, ...parts));
+    if (a.low_confidence) chips.push(badge('낮은 신뢰도', 'b-suspect', '아래 값 가운데 하나가 기준을 벗어났습니다'));
+    if ('avg_logprob' in a) {
+      if (a.avg_logprob == null) low(false, '글자 확신도: 이 인식 모델은 알려 주지 않습니다');
+      else low(a.avg_logprob < -0.8, '글자 확신도 ' + Number(a.avg_logprob).toFixed(2) + ' (0에 가까울수록 확실, -0.80보다 낮으면 불확실)' + (a.avg_logprob < -0.8 ? ': 낮음' : ''));
+    }
+    if (a.no_speech_prob != null) low(a.no_speech_prob > 0.5, '말소리가 아닐 확률 ' + pct(a.no_speech_prob) + ' (50%를 넘으면 잡음일 수 있음)' + (a.no_speech_prob > 0.5 ? ': 높음' : ''));
+    if (a.compression_ratio != null) low(a.compression_ratio > 2.4, '같은 글자가 되풀이되는 정도 ' + Number(a.compression_ratio).toFixed(2) + ' (2.40을 넘으면 지어낸 문장일 수 있음)' + (a.compression_ratio > 2.4 ? ': 높음' : ''));
+    if (a.audio_s != null) low(a.audio_s < 0.4, '발화 길이 ' + Number(a.audio_s).toFixed(2) + '초' + (a.audio_s < 0.4 ? ': 0.4초보다 짧아 믿기 어려움' : ''));
+    if (a.rms_db != null) low(false, '소리 크기 ' + Number(a.rms_db).toFixed(1) + ' dBFS (0에 가까울수록 큼)' + (a.rms_db < -40 ? ': 작게 들어옴' : ''));
+    if (a.low_confidence === false) low(false, '종합: 신뢰도 충분');
+    else if (a.low_confidence) low(true, '종합: 신뢰도 낮음. 이 턴은 잘못 알아들었을 수 있습니다');
+  } else if (s.kind === 'retrieval') {
+    line('검색어: ', q(input.query || ''));
+    const src = output.sources || [];
+    line('자료 ' + src.length + '건' + (output.top_score != null ? ', 최고 점수 ' + Number(output.top_score).toFixed(2) : '') + (a.used === false ? ', 기준에 못 미쳐 쓰지 않음' : a.used ? ', 프롬프트에 첨부' : ''));
+    src.forEach(t => line('· ' + (typeof t === 'string' ? t : t.title || JSON.stringify(t))));
+  } else if (s.kind === 'llm') {
+    line((a.model || s.name || '') + (a.round ? ' · ' + a.round + '번째 생성' : '') + (a.first_token_ms != null ? ' · 첫 글자 ' + sec(a.first_token_ms) : ''));
+    if (output.text) line('만든 글: ', q(output.text));
+    (output.tool_calls || []).forEach(c => line('도구를 부르기로 함: ' + (c.name || (c.function && c.function.name) || '') + ' ', el('span', {}, JSON.stringify(c.arguments || (c.function && c.function.arguments) || {}))));
+  } else if (s.kind === 'tool' && a.refresh_of) {
+    // not a call the model made: the gateway read the state again after a write tool, to redraw the customer's screen
+    chips.push(badge('화면 갱신', '', '모델이 부른 것이 아니라, 변경 도구가 실행된 뒤 화면을 새로 그리려고 게이트웨이가 이어서 부른 조회입니다'));
+    line(a.refresh_of + ' 호출에 딸린 조회입니다. 모델이 따로 부른 도구가 아닙니다.');
+    if (output.text) line('돌아온 것: ', q(output.text));
+  } else if (s.kind === 'tool') {
+    const effect = a.effect || output.effect;
+    chips.push(badge(effect === 'write' ? '변경' : '조회', effect === 'write' ? 'b-out' : ''));
+    if (output.needs_confirmation) chips.push(badge('실행 전, 동의 대기', 'b-out'));
+    if (a.executed || output.executed) chips.push(badge('실행됨', 'b-back'));
+    const errorType = a.error_type || output.error_type;
+    if (errorType) chips.push(badge(ERROR_LABEL[errorType] || errorType, 'b-live'));
+    line('보낸 것: ', el('span', {}, JSON.stringify(input.arguments !== undefined ? input.arguments : input)));
+    if (output.confirmation_text) line('고객에게 읽을 확인 문장: ', q(output.confirmation_text));
+    if (output.text) line('돌아온 것: ', q(output.text));
+  } else if (s.kind === 'guard') {
+    line('거둔 문장: ', q(input.sentence || ''));
+    line('규칙 ' + (a.guard_id || s.name || '') + ' · ' + (a.action === 'dropped' ? '다시 생성해도 걸려 문장을 뺌' : '거두고 다시 생성함'));
+  } else if (s.kind === 'tts') {
+    line((input.chars != null ? input.chars + '자' : '') + (a.seconds != null ? ' → ' + Number(a.seconds).toFixed(1) + '초 분량' : ''));
+  } else if (s.kind === 'output') {
+    line((a.phase === 'filler' ? '추임새' : '답변') + '의 첫 글자나 첫 소리가 고객에게 닿음 (말 끝에서 ' + sec((s.t_start - turn.t_user_end) * 1000) + ')');
+  } else if (s.kind === 'interrupt') {
+    line('고객이 말을 끊음' + (a.heard_chars != null ? ': 답변의 ' + a.heard_chars + '자까지 들림' : ''));
+  } else if (s.kind === 'handoff') {
+    line('상담원에게 넘김' + (a.reason ? ': ' + a.reason : '') + (a.rule_id ? ' (넘김 조건 ' + a.rule_id + ')' : ''));
+  } else if (s.kind === 'display') {
+    // what was put on the customer's screen: the system's values, not the agent's words
+    const words = displayText(s.name, output.data);
+    chips.push(badge(DISPLAY_LABEL[s.name] || s.name, s.name === 'confirm' ? 'b-out' : s.name === 'receipt' ? 'b-back' : ''));
+    if (s.name === 'confirm' || s.name === 'notice') line('고객 화면에 띄운 글: ', q(words.summary));
+    else line(words.summary || '화면에 표시함');
+    words.lines.forEach(t => line('· ' + t));
+    if (a.source) line('출처: ' + a.source + ' 도구의 결과');
+  } else if (s.kind === 'action') {
+    line('고객이 화면에서 누름: ', q(touchText(s)));
+    if (a.tool) line('이 터치로 호출된 도구: ' + a.tool);
+  }
+  const raw = {};
+  if (s.input !== null && s.input !== undefined) raw['입력'] = s.input;
+  if (s.output !== null && s.output !== undefined) raw['출력'] = s.output;
+  if (Object.keys(a).length) raw['속성'] = a;
+  return el('li', { class: 'span' + (s.ok === false ? ' failed' : '') + (a.refresh_of ? ' sub' : ''), style: '--c: var(--k-' + s.kind + ')', 'data-kind': s.kind },
+    el('div', { class: 'sh' }, el('b', {}, KIND_LABEL[s.kind] || s.kind), s.name && s.kind !== 'display' ? el('span', {}, s.name) : null, chips,
+      s.ok === false ? badge('실패', 'b-live') : null,
+      el('span', { class: 't' }, (turn.turn === 0 ? '시작 +' : '말 끝 +') + sec((s.t_start - turn.t_user_end) * 1000) + (ms >= 1 ? ' · ' + sec(ms) + ' 걸림' : ''))),
+    lines,
+    Object.keys(raw).length ? el('details', {}, el('summary', { class: 'muted', style: 'font-size:12.5px;cursor:pointer' }, '저장된 원문 보기 (개인정보는 가려져 있습니다)'),
+      Object.entries(raw).map(([k, v]) => el('pre', { class: 'json' }, k + '\n' + pretty(v)))) : null);
+}
+
+function jumpToTurn(n) {
+  const card = $('turn-' + n);
+  if (!card) return;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+  card.focus({ preventScroll: true });
+}
+
+// ---- analysis ----------------------------------------------------------------------------------
+async function loadAnalysis(sid, waitForIt) {
+  const box = $('analysis');
+  box.hidden = false;
+  const head = el('header', {}, el('h2', {}, '대화 분석'));
+  const body = el('div', {});
+  setKids(box, head, body);
+  stateView(body, 'loading', { title: waitForIt ? '분석하는 중입니다. 기준을 하나씩 판정합니다' : '분석 결과를 불러오는 중입니다' });
+  let result = null, problem = null;
+  for (let attempt = 0; attempt < (waitForIt ? 20 : 1); attempt++) {
+    try { result = await api('/api/sessions/' + encodeURIComponent(sid) + '/analysis'); problem = null; break; }
+    catch (err) { problem = err; if (err.kind !== 'notfound') break; }
+    if (waitForIt) await new Promise(r => setTimeout(r, 1500));
+  }
+  if (current !== sid) return;
+  analysisState = { sid, result };
+  if (problem) {
+    if (problem.kind === 'notfound') {
+      stateView(body, 'empty', { title: '아직 분석이 없습니다',
+        hint: detail && detail.status === 'active' ? '대화가 끝나면 요약과 기준 판정이 자동으로 붙습니다. 지금까지의 내용으로 먼저 분석할 수도 있습니다.'
+          : '이 대화는 아직 분석되지 않았습니다.',
+        action: el('button', { class: 'small', id: 'run-analysis', onclick: () => runAnalysis(sid) }, '지금 분석 실행') });
+      body.append(saveCaseBlock(sid, []));
+    } else {
+      errorView(body, problem, '대화 분석', () => loadAnalysis(sid));
+    }
+    return;
+  }
+  renderAnalysis(body, sid, result);
+}
+
+async function runAnalysis(sid) {
+  const body = $('analysis').lastElementChild;
+  stateView(body, 'loading', { title: '분석하는 중입니다. 기준을 하나씩 판정합니다' });
+  try {
+    await api('/api/sessions/' + encodeURIComponent(sid) + '/analyze', { method: 'POST', body: {}, timeout: 180000 });
+  } catch (err) {
+    if (current === sid) errorView(body, err, '대화 분석', () => runAnalysis(sid));
+    return;
+  }
+  if (current === sid) { await loadAnalysis(sid, true); loadList(true); }
+}
+
+function valueText(v) {
+  if (v === true) return '예'; if (v === false) return '아니오';
+  if (v === null || v === undefined || v === '') return '(없음)';
+  return typeof v === 'object' ? JSON.stringify(v) : String(v);
+}
+
+function renderAnalysis(body, sid, r) {
+  const rules = {};
+  ((detail && detail.definition && detail.definition.evaluation && detail.definition.evaluation.success) || []).forEach(c => { rules[c.id] = c; });
+  const criteria = (r.criteria || []).slice().sort((a, b) =>
+    (b.passed === false) - (a.passed === false) || (b.safety ? 1 : 0) - (a.safety ? 1 : 0));
+  const failed = criteria.filter(c => c.passed === false), safetyFailed = failed.filter(c => c.safety);
+  const verdict = safetyFailed.length ? el('div', { class: 'notice bad' }, el('strong', {}, '안전 기준 ' + safetyFailed.length + '개를 지키지 못했습니다'), '통과율과 상관없이 이 대화는 실패입니다.')
+    : failed.length ? el('div', { class: 'notice' }, el('strong', {}, '기준 ' + criteria.length + '개 중 ' + failed.length + '개 실패'))
+    : criteria.length ? el('div', { class: 'notice good' }, el('strong', {}, '기준 ' + criteria.length + '개를 모두 통과했습니다')) : null;
+  const extracted = Object.entries(r.extracted || {}), metrics = Object.entries(r.metrics || {});
+  setKids(body, 
+    verdict,
+    el('h3', {}, '요약'), el('p', { id: 'analysis-summary' }, r.summary || '(요약 없음)'),
+    el('h3', {}, '대화에서 뽑은 정보'),
+    extracted.length ? el('dl', { class: 'kv' }, extracted.map(([k, v]) => [el('dt', {}, k), el('dd', {}, valueText(v))]))
+      : el('p', { class: 'muted' }, '정의서에 뽑을 항목이 없거나 뽑힌 값이 없습니다.'),
+    el('h3', {}, '성공 기준 판정'),
+    criteria.length ? el('ul', { class: 'criteria' }, criteria.map(c => {
+      const rule = rules[c.id];
+      return el('li', { class: 'crit ' + (c.passed === true ? 'pass' : c.passed === false ? 'fail' : ''), 'data-criterion': c.id },
+        el('div', { class: 'ch' },
+          c.passed === true ? badge('통과', 'b-back') : c.passed === false ? badge('실패', 'b-live') : badge('판정 불가'),
+          el('b', {}, c.id), c.safety ? badge('안전 기준', 'b-safety', '실패하면 통과율과 상관없이 승인이 막힙니다') : null,
+          rule && rule.judge === 'metric' ? badge('수치 판정') : null),
+        rule ? el('div', { class: 'rule' }, rule.rule) : null,
+        el('div', {}, c.reason || '(이유 없음)'),
+        el('div', { class: 'ev' }, '근거',
+          (c.evidence_turns || []).length ? c.evidence_turns.map(n => el('button', { class: 'ghost small', onclick: () => jumpToTurn(n) }, n + '번 턴'))
+            : el('span', {}, '턴 없음')));
+    })) : el('p', { class: 'muted' }, '정의서에 성공 기준이 없습니다.'),
+    metrics.length ? [el('h3', {}, '이 대화의 수치'),
+      el('dl', { class: 'kv' }, metrics.map(([k, v]) => [el('dt', {}, METRIC_LABEL[k] || k), el('dd', { class: 'num' }, metricText(k, v))]))] : null,
+    el('div', { class: 'actions' },
+      el('button', { class: 'ghost small', onclick: () => runAnalysis(sid) }, '분석 다시 실행'),
+      r.created_at ? el('span', { class: 'muted', style: 'font-size:12.5px' }, clock(r.created_at) + ' 분석') : null),
+    saveCaseBlock(sid, criteria));
+}
+
+// "Save as test case": the customer's turns become a case the next test run replays (PRD S8).
+function saveCaseBlock(sid, criteria) {
+  const result = el('div', {});
+  const idInput = el('input', { type: 'text', value: 'case_' + sid.replace(/[^A-Za-z0-9]/g, '').slice(-8), required: true, 'aria-label': '사례 이름' });
+  const selects = criteria.map(c => {
+    const s = el('select', { 'aria-label': c.id + ' 기대 판정' }, el('option', { value: 'true' }, '통과해야 함'), el('option', { value: 'false' }, '실패해야 함'), el('option', { value: '' }, '기대 없음'));
+    return [c.id, s];
+  });
+  const form = el('form', { class: 'formgrid', hidden: true },
+    el('div', { class: 'row' }, el('span', {}, '사례 이름'), idInput),
+    criteria.length ? el('div', { class: 'muted', style: 'font-size:12.5px' }, '올바른 에이전트라면 이 대화에서 받아야 할 판정을 고르세요.') : null,
+    selects.map(([id, s]) => el('div', { class: 'row' }, el('span', {}, id), s)),
+    el('div', { class: 'muted', style: 'font-size:12.5px' }, '저장되는 글은 개인정보가 가려진 글입니다. 주문번호 같은 값은 재생할 때 다시 채워야 합니다.'),
+    el('div', { class: 'row' }, el('button', { type: 'submit', class: 'small' }, '사례 저장'),
+      el('button', { type: 'button', class: 'ghost small', onclick: () => { form.hidden = true; opener.hidden = false; } }, '취소')));
+  const opener = el('button', { class: 'ghost small', id: 'save-case', onclick: () => { form.hidden = false; opener.hidden = true; idInput.focus(); } }, '이 대화를 시험 사례로 저장');
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const expect = {};
+    selects.forEach(([id, s]) => { if (s.value) expect[id] = s.value === 'true'; });
+    const submit = form.querySelector('button[type=submit]');
+    submit.disabled = true;
+    try {
+      await api('/api/sessions/' + encodeURIComponent(sid) + '/save_case', { method: 'POST', body: { case_id: idInput.value.trim(), expect } });
+      form.hidden = true; opener.hidden = false;
+      setKids(result, el('div', { class: 'notice good', id: 'case-saved' }, el('strong', {}, '사례 ' + idInput.value.trim() + '을(를) 저장했습니다'),
+        '이 에이전트의 다음 초안에 넣어 시험을 다시 돌릴 수 있습니다. ', el('a', { href: '/studio' + qs({ agent: detail && detail.meta.agent_id }) }, '제작실 열기')));
+    } catch (err) {
+      setKids(result, el('div', { class: 'notice bad' }, el('strong', {}, '사례를 저장하지 못했습니다'),
+        err.kind === 'missing' ? '서버에 평가 모듈이 설치되지 않았습니다.' : err.message));
+    } finally { submit.disabled = false; }
+  });
+  return el('div', { style: 'margin-top:12px' }, opener, form, result);
+}
+
+// ---- live updates ------------------------------------------------------------------------------
+function setLive(text, cls) { $('live-state').textContent = text; $('live-state').className = 'state ' + (cls || ''); }
+
+function onLive(event) {
+  let d = {};
+  try { d = JSON.parse(event.data); } catch (err) { /* a bare line still means "something changed" */ }
+  const inner = d.data || d.meta || d.turn || d.span || {};
+  const sid = d.session_id || inner.session_id || (d.type === 'analysis' ? d.key : undefined);
+  if (d.type === 'hello' || d.type === 'audio') return;
+  clearTimeout(listTimer);
+  listTimer = setTimeout(() => loadList(true), 400);
+  if (sid && sid === current) {
+    clearTimeout(detailTimer);
+    detailTimer = setTimeout(async () => {
+      await loadDetail(true);
+      if ((d.type || event.type) === 'analysis' || (detail && detail.status !== 'active' && !analysisState.result)) loadAnalysis(sid);
+    }, 400);
+  }
+}
+
+function connectLive() {
+  if (!window.EventSource) { startPolling(); return; }
+  liveSource = new EventSource('/api/live');
+  let lost = false;
+  liveSource.onopen = () => { setLive('실시간 갱신 중', 'ok'); if (lost) { lost = false; loadList(true); if (current) loadDetail(true); } };
+  liveSource.onmessage = onLive;
+  ['session', 'session_start', 'session_end', 'turn', 'span', 'analysis'].forEach(name => liveSource.addEventListener(name, onLive));
+  liveSource.onerror = () => {
+    if (liveSource.readyState === EventSource.CLOSED) { liveSource = null; startPolling(); }   // the endpoint is not there
+    else { lost = true; setLive('실시간 연결이 끊겨 다시 연결하는 중', 'live'); }
+  };
+}
+function startPolling() {
+  setLive('실시간 알림 없음 · 10초마다 새로 고침', '');
+  $('live-state').title = '서버에 실시간 알림(/api/live)이 없어 주기적으로 다시 받아 옵니다.';
+  setInterval(() => { loadList(true); if (current && detail && detail.status === 'active') loadDetail(true); }, 10000);
+}
+
+// ---- trend -------------------------------------------------------------------------------------
+const SERIES = ['#5ad6c8', '#ffb341', '#7aa2ff', '#b48cf2', '#9bd15b', '#ff8fb1'];
+function normGroup(g) {
+  const pick = (...values) => values.find(v => v !== undefined && v !== null);
+  const spans = {};   // WP3: span_ms = {kind: {median, p90, count}}; plain numbers are accepted too
+  Object.entries(g.span_ms_median || g.span_ms || {}).forEach(([k, v]) => { spans[k] = v && typeof v === 'object' ? v.median : v; });
+  return { agent: g.agent_id || g.agent, version: g.version, sessions: pick(g.sessions, g.session_count, 0),
+    median: g.response_ms_median, spans,
+    toolFail: pick(g.tool_failure_rate, g.tools && g.tools.failure_rate),
+    pass: pick(g.criteria_pass_rate, g.analysis_pass_rate, g.pass_rate, g.criteria && g.criteria.pass_rate),
+    handoff: pick(g.handoff_rate, g.handoff && typeof g.handoff === 'object' ? g.handoff.rate : undefined),
+    asr: g.asr || null, emptyTurns: g.empty_wait_turns, emptyRate: g.empty_wait_rate };
+}
+
+async function loadTrend() {
+  stateView($('trend-table'), 'loading', { title: '지표를 모으는 중입니다' });
+  $('trend-chart-panel').hidden = true; $('trend-asr-panel').hidden = true;
+  let raw;
+  try { raw = await api('/api/metrics' + qs({ agent: $('t-agent').value, days: $('t-days').value })); }
+  catch (err) { errorView($('trend-table'), err, '추세', loadTrend); return; }
+  const groups = asList(raw, 'groups', 'by_version', 'rows').map(normGroup)
+    .sort((a, b) => String(a.agent).localeCompare(String(b.agent)) || a.version - b.version);
+  if (!groups.length) {
+    stateView($('trend-table'), 'empty', { title: '이 기간에 기록된 대화가 없습니다', hint: '기간을 늘리거나 에이전트 조건을 "모든 에이전트"로 바꿔 보세요.' });
+    return;
+  }
+  const maxMedian = Math.max(1, ...groups.map(g => g.median || 0));
+  // lowerIsBetter: true / false / null (no judgement, e.g. handoff share)
+  const delta = (g, prev, key, lowerIsBetter, fmt) => {
+    if (!prev || g[key] == null || prev[key] == null) return null;
+    const d = g[key] - prev[key];
+    if (Math.abs(d) < 1e-9) return el('span', { class: 'delta muted' }, '변화 없음');
+    const good = lowerIsBetter === null ? null : (d < 0) === lowerIsBetter;
+    return el('span', { class: 'delta ' + (good === null ? 'muted' : good ? 'good' : 'bad-text'), title: 'v' + prev.version + '과 비교' },
+      (d > 0 ? '▲ ' : '▼ ') + fmt(Math.abs(d)) + (good === null ? '' : good ? ' 좋아짐' : ' 나빠짐'));
+  };
+  const pp = x => Math.round(x * 100) + '%p';
+  const rows = groups.map((g, i) => {
+    const prev = i > 0 && groups[i - 1].agent === g.agent ? groups[i - 1] : null;
+    const spanKinds = KINDS.filter(k => g.spans[k] > 0), total = spanKinds.reduce((sum, k) => sum + g.spans[k], 0);
+    return el('tr', {},
+      el('td', {}, agentName[g.agent] || g.agent), el('td', { class: 'num' }, 'v' + g.version), el('td', { class: 'num' }, String(g.sessions)),
+      el('td', {}, el('span', { class: 'hbar', style: 'width:' + Math.round((g.median || 0) / maxMedian * 90) + 'px' }), el('span', { class: 'num' }, sec(g.median)), delta(g, prev, 'median', true, sec)),
+      el('td', { class: 'num' }, pct(g.toolFail), delta(g, prev, 'toolFail', true, pp)),
+      el('td', { class: 'num' }, pct(g.pass), delta(g, prev, 'pass', false, pp)),
+      el('td', { class: 'num' }, pct(g.handoff), delta(g, prev, 'handoff', null, pp)),
+      el('td', {}, total ? el('div', { class: 'stack', role: 'img', 'aria-label': spanKinds.map(k => KIND_LABEL[k] + ' ' + sec(g.spans[k])).join(', ') },
+        spanKinds.map(k => el('i', { style: '--c: var(--k-' + k + '); width:' + (g.spans[k] / total * 100).toFixed(1) + '%', title: KIND_LABEL[k] + ' ' + sec(g.spans[k]) }))) : '-'));
+  });
+  const kindsShown = KINDS.filter(k => groups.some(g => g.spans[k] > 0));
+  setKids($('trend-table'), el('div', { class: 'table-wrap' }, el('table', {},
+    el('thead', {}, el('tr', {}, ['에이전트', '버전', '대화 수', '응답 지연 중앙값', '도구 실패율', '성공 기준 통과율', '넘김 비율', '구간별 중앙값'].map((h, i) =>
+      el('th', { class: [1, 2, 4, 5, 6].includes(i) ? 'num' : '' }, h)))),
+    el('tbody', {}, rows))),
+    kindsShown.length ? el('div', { class: 'klegend' }, kindsShown.map(k => el('span', { style: '--c: var(--k-' + k + ')' }, KIND_LABEL[k]))) : null);
+  renderChart(asList(raw, 'by_day', 'daily'));
+  renderAsrTrend(raw, groups);
+}
+
+// Recognition quality (the asr block) and turns where the agent only said "wait", overall, by version and by engine.
+const ASR_RATES = [['suspect_rate', '인식 의심', '시스템이 의심한 턴의 비율'], ['misheard_rate', '사람이 표시한 오인식', '사람이 잘못 알아들었다고 표시한 턴의 비율'],
+  ['reask_rate', '되물음', '에이전트가 다시 말해 달라고 한 턴의 비율'], ['repeat_rate', '같은 말 반복', '고객이 같은 말을 다시 한 턴의 비율'],
+  ['low_confidence_rate', '낮은 신뢰도', '인식기가 스스로 불확실하다고 본 턴의 비율']];
+function renderAsrTrend(raw, groups) {
+  const panel = $('trend-asr-panel'), box = $('trend-asr');
+  const engines = Object.entries(raw.by_stt_engine || {}).map(([name, v]) => [name, (v && v.asr) || v || {}]);
+  const has = raw.asr || raw.empty_wait_turns != null || engines.length || groups.some(g => g.asr || g.emptyTurns != null);
+  panel.hidden = false;
+  if (!has) {
+    stateView(box, 'missing', { title: '인식 품질 지표는 아직 쓸 수 없습니다', hint: '서버가 지표에 인식 품질(asr)과 기다리라고만 한 턴을 넣어 보내지 않습니다. 위의 다른 지표는 그대로 볼 수 있습니다.' });
+    return;
+  }
+  const rate = x => (x === null || x === undefined || isNaN(x)) ? '-' : (x * 100).toFixed(x > 0 && x < 0.1 ? 1 : 0) + '%';
+  const count = x => (x === null || x === undefined) ? '-' : String(x);
+  const change = (now, before, prev) => {
+    if (!prev || now == null || before == null) return null;
+    const d = now - before;
+    if (Math.abs(d) < 0.0005) return el('span', { class: 'delta muted' }, '변화 없음');
+    return el('span', { class: 'delta ' + (d < 0 ? 'good' : 'bad-text'), title: 'v' + prev.version + '과 비교' },
+      (d > 0 ? '▲ ' : '▼ ') + (Math.abs(d) * 100).toFixed(1) + '%p ' + (d < 0 ? '좋아짐' : '나빠짐'));
+  };
+  const a = raw.asr || {};
+  const tiles = el('div', { class: 'tiles', id: 'asr-tiles' },
+    el('div', {}, el('div', { class: 'n' }, count(a.voice_turns)), el('div', { class: 'lab' }, '음성 턴'), el('small', {}, '음성 인식을 거친 턴')),
+    ASR_RATES.map(([key, label, hint]) => el('div', { 'data-key': key, title: hint }, el('div', { class: 'n' }, rate(a[key])), el('div', { class: 'lab' }, label),
+      key === 'suspect_rate' && a.suspect_turns != null ? el('small', {}, a.suspect_turns + '턴') : key === 'misheard_rate' && a.misheard_turns != null ? el('small', {}, a.misheard_turns + '턴') : null)),
+    el('div', { 'data-key': 'empty_wait', title: '에이전트가 기다려 달라고만 하고 도구를 부르지 않은 턴입니다. 글 대화도 셉니다.' },
+      el('div', { class: 'n' }, count(raw.empty_wait_turns)), el('div', { class: 'lab' }, '기다리라고만 한 턴'),
+      el('small', {}, raw.empty_wait_rate != null ? '모든 턴의 ' + rate(raw.empty_wait_rate) : '')));
+  const head = (first, extra) => el('thead', {}, el('tr', {}, first.map(h => el('th', {}, h)), el('th', { class: 'num' }, '음성 턴'),
+    ASR_RATES.map(([, label]) => el('th', { class: 'num' }, label)), extra ? el('th', { class: 'num' }, extra) : null));
+  const versionRows = groups.filter(g => g.asr || g.emptyTurns != null).map(g => {
+    const i = groups.indexOf(g), prev = i > 0 && groups[i - 1].agent === g.agent ? groups[i - 1] : null;
+    const v = g.asr || {}, pv = (prev && prev.asr) || {};
+    return el('tr', {}, el('td', {}, agentName[g.agent] || g.agent), el('td', { class: 'num' }, 'v' + g.version), el('td', { class: 'num' }, count(v.voice_turns)),
+      ASR_RATES.map(([key]) => el('td', { class: 'num' }, rate(v[key]), ['suspect_rate', 'misheard_rate'].includes(key) ? change(v[key], pv[key], prev) : null)),
+      el('td', { class: 'num' }, count(g.emptyTurns) + (g.emptyRate != null ? ' (' + rate(g.emptyRate) + ')' : ''), change(g.emptyRate, prev && prev.emptyRate, prev)));
+  });
+  const maxSuspect = Math.max(0.0001, ...engines.map(([, v]) => v.suspect_rate || 0));
+  const engineRows = engines.map(([name, v]) => el('tr', { 'data-engine': name }, el('td', {}, ENGINE_LABEL[name] || name), el('td', { class: 'num' }, count(v.voice_turns)),
+    ASR_RATES.map(([key]) => el('td', { class: 'num' },
+      key === 'suspect_rate' && v[key] != null ? el('span', { class: 'hbar', style: '--c: var(--out); width:' + Math.round(v[key] / maxSuspect * 60) + 'px' }) : null, rate(v[key])))));
+  setKids(box, tiles,
+    el('h3', {}, '에이전트와 버전별', el('small', {}, '같은 에이전트의 바로 앞 버전과 비교합니다')),
+    versionRows.length ? el('div', { class: 'table-wrap' }, el('table', { id: 'asr-by-version' }, head(['에이전트', '버전'], '기다리라고만 한 턴'), el('tbody', {}, versionRows)))
+      : el('p', { class: 'muted' }, '버전별 인식 품질 자료가 없습니다.'),
+    el('h3', {}, '인식 모델별', el('small', {}, '같은 기간에 각 모델이 맡은 음성 턴')),
+    engineRows.length ? el('div', { class: 'table-wrap' }, el('table', { id: 'asr-by-engine' }, head(['인식 모델']), el('tbody', {}, engineRows)))
+      : el('p', { class: 'muted' }, '이 기간에 음성 인식을 거친 턴이 없습니다.'));
+}
+
+// ---- recognition quality: cases and re-running them through each engine -------------------------
+let asrCases = [], benchTimer = null, benchShown = null;
+const cerText = x => (x === null || x === undefined || isNaN(x)) ? '-' : (x * 100).toFixed(1) + '%';
+const BENCH_STATUS = { running: ['돌리는 중', 'b-out'], finished: ['끝남', 'b-back'], error: ['오류', 'b-live'] };
+
+function loadAsr() { loadCases(); loadBenchRuns(true); }
+
+async function loadCases() {
+  $('bench-run').disabled = true; $('case-count').textContent = '';
+  stateView($('cases'), 'loading', { title: '인식 사례를 불러오는 중입니다' });
+  let raw;
+  try { raw = await api('/api/asr/cases' + qs({ agent: $('a-agent').value })); }
+  catch (err) { asrCases = []; errorView($('cases'), err, '인식 품질', loadCases); return; }
+  asrCases = asList(raw, 'cases');
+  renderCases();
+}
+
+function renderCases() {
+  const box = $('cases');
+  $('case-count').textContent = asrCases.length ? asrCases.length + '건' : '';
+  const usable = asrCases.filter(c => (c.expected || '').trim()).length;
+  $('bench-run').disabled = !usable;
+  $('bench-run').title = usable ? '사례의 음성을 인식 모델마다 다시 넣어 보고 실제 한 말과 비교합니다.' : '실제 한 말이 적힌 사례가 있어야 비교할 수 있습니다.';
+  if (!asrCases.length) {
+    stateView(box, 'empty', { title: '아직 인식 사례가 없습니다',
+      hint: '"녹음해서 품질 개선에 쓰기"를 켠 음성 대화에서 에이전트가 잘못 알아들은 말의 "잘못 알아들음"을 누르고 실제로 한 말을 적으면, 그 턴의 음성이 사례가 됩니다. 이미 끝난 녹음 대화는 "대화" 보기의 턴 카드에서 표시할 수 있습니다.',
+      action: el('a', { href: '/' + qs({ channel: 'voice' }) }, '대화 화면 열기') });
+    return;
+  }
+  setKids(box, el('ol', { class: 'cases' }, asrCases.map(caseItem)));
+}
+
+function caseItem(c) {
+  const expected = (c.expected || '').trim();
+  const acts = el('div', { class: 'acts' }), editBox = el('div', { class: 'mh-field', style: 'grid-column: 1 / -1', hidden: true }), note = el('div', { class: 'mh-note bad-text', style: 'grid-column: 1 / -1' });
+  const input = el('input', { type: 'text', value: expected, placeholder: '실제로 한 말', 'aria-label': '실제로 한 말', maxlength: '300' });
+  const save = async () => {
+    try {
+      await api('/api/sessions/' + encodeURIComponent(c.session_id) + '/turns/' + c.turn + '/flag', { method: 'POST', body: { misheard: true, actual_text: input.value.trim() } });
+      loadCases();
+    } catch (err) { note.textContent = '저장하지 못했습니다: ' + err.message; }
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); save(); } });
+  setKids(editBox, input, el('button', { class: 'small', onclick: save }, '저장'), el('button', { class: 'ghost small', onclick: () => { editBox.hidden = true; } }, '닫기'));
+  const idle = () => setKids(acts,
+    el('button', { class: 'ghost small', onclick: () => { editBox.hidden = false; input.focus(); } }, expected ? '실제 한 말 고치기' : '실제 한 말 적기'),
+    c.session_id ? el('button', { class: 'ghost small', onclick: () => showTurn(c.session_id, c.turn) }, '대화에서 보기') : null,
+    el('button', { class: 'ghost small', onclick: () => setKids(acts,
+      el('button', { class: 'danger small', onclick: async e => {
+        e.target.disabled = true;
+        try { await api('/api/asr/cases/' + encodeURIComponent(c.id), { method: 'DELETE' }); loadCases(); }
+        catch (err) { note.textContent = '삭제하지 못했습니다: ' + err.message; idle(); }
+      } }, '사례 삭제 확인'),
+      el('button', { class: 'ghost small', onclick: idle }, '취소')) }, '삭제'));
+  idle();
+  return el('li', { class: 'case', 'data-case': c.id },
+    el('dl', { class: 'words' },
+      el('dt', {}, '실제 한 말'), el('dd', { class: expected ? '' : 'none' }, expected || '아직 적지 않았습니다. 적어야 비교에 들어갑니다.'),
+      el('dt', {}, '그때 인식'), el('dd', {}, c.heard ? charDiff(expected, c.heard) : el('span', { class: 'muted' }, '(인식된 글 없음)'))),
+    c.audio_url ? el('audio', { controls: true, preload: 'none', src: c.audio_url, 'aria-label': '사례 ' + c.id + ' 음성',
+      onerror: e => e.target.replaceWith(el('span', { class: 'muted', style: 'font-size:12.5px' }, '저장된 음성이 없습니다')) }) : el('span', { class: 'muted', style: 'font-size:12.5px' }, '음성 없음'),
+    acts,
+    el('div', { class: 'meta' }, el('span', {}, agentName[c.agent_id] || c.agent_id || ''), el('span', {}, '그때 인식 모델 ' + (ENGINE_LABEL[c.engine] || c.engine || '-')),
+      c.audio_s != null ? el('span', {}, '길이 ' + Number(c.audio_s).toFixed(1) + '초') : null, el('span', {}, clock(c.created_at) + ' 표시'),
+      el('span', {}, '세션 ' + c.session_id + ' · ' + c.turn + '번 턴')),
+    editBox, note);
+}
+
+async function showTurn(sid, turn) {
+  showTab('sessions');
+  await openSession(sid);
+  jumpToTurn(turn);
+}
+
+async function startBench() {
+  $('bench-run').disabled = true;
+  clearTimeout(benchTimer);
+  stateView($('bench'), 'loading', { title: '사례의 음성을 인식 모델마다 다시 돌리는 중입니다' });
+  let res;
+  try { res = await api('/api/asr/bench', { method: 'POST', body: $('a-agent').value ? { agent: $('a-agent').value } : {} }); }
+  catch (err) { errorView($('bench'), err, '인식 모델 비교', startBench); $('bench-run').disabled = false; return; }
+  showBench(res.run_id);
+}
+
+async function showBench(runId) {
+  clearTimeout(benchTimer);
+  benchShown = runId;
+  let run;
+  try { run = await api('/api/asr/bench/' + encodeURIComponent(runId)); }
+  catch (err) { if (benchShown === runId) errorView($('bench'), err, '인식 모델 비교', () => showBench(runId)); return; }
+  if (benchShown !== runId) return;
+  renderBench(run);
+  if (run.status === 'running') benchTimer = setTimeout(() => showBench(runId), 1200);
+  else { renderCases(); loadBenchRuns(false); }
+}
+
+function renderBench(run) {
+  const engines = Object.entries(run.engines || {}), items = run.items || [];
+  const [statusText, statusClass] = BENCH_STATUS[run.status] || [run.status || '', ''];
+  const ready = engines.filter(([, e]) => e.available !== false && e.cer != null);
+  const best = ready.length > 1 ? Math.min(...ready.map(([, e]) => e.cer)) : null;
+  const exactOf = (name, e) => {
+    if (e.exact == null) return '-';
+    const n = e.n || 0, shown = e.exact_rate != null ? e.exact_rate : n ? e.exact / n : null;
+    return e.exact + ' / ' + n + (shown != null ? ' (' + pct(shown) + ')' : '');
+  };
+  const skipped = Array.isArray(run.skipped) ? run.skipped.length : (run.skipped || 0);
+  setKids($('bench'),
+    el('div', { class: 'bench-head', id: 'bench-head', 'data-run': run.run_id, 'data-status': run.status },
+      badge(statusText, statusClass), el('span', {}, '실행 ' + run.run_id),
+      run.started_at ? el('span', {}, clock(run.started_at) + ' 시작') : null,
+      run.status === 'running' ? el('span', { class: 'loading', style: 'display:inline-flex;gap:8px;align-items:center' },
+        run.total != null ? '사례 ' + (run.done || 0) + ' / ' + run.total : '진행 중') : null,
+      skipped ? el('span', { title: '실제 한 말이 적히지 않은 사례는 비교할 수 없습니다' }, '실제 한 말이 없어 뺀 사례 ' + skipped + '건') : null),
+    run.status === 'error' ? el('div', { class: 'notice bad' }, el('strong', {}, '비교를 끝내지 못했습니다'), run.error || '서버가 이유를 알려 주지 않았습니다.') : null,
+    engines.length ? el('div', { class: 'table-wrap' }, el('table', { id: 'bench-engines' },
+      el('thead', {}, el('tr', {}, el('th', {}, '인식 모델'), ['사례 수', '글자 오류율', '완전 일치', '인식 시간 (중앙값)'].map(h => el('th', { class: 'num' }, h)))),
+      el('tbody', {}, engines.map(([name, e]) => e.available === false
+        ? el('tr', { class: 'unavailable', 'data-engine': name }, el('td', {}, ENGINE_LABEL[name] || name, ' ', badge('쓸 수 없음')),
+            el('td', { colspan: '4' }, name === 'qwen' ? '이 인식 모델을 쓸 수 없어 돌리지 못했습니다. Qwen3-ASR 서버가 꺼져 있으면 이렇게 나옵니다.' : '이 인식 모델이 서버에 올라와 있지 않아 돌리지 못했습니다.'))
+        : el('tr', { 'data-engine': name }, el('td', {}, ENGINE_LABEL[name] || name),
+            el('td', { class: 'num' }, e.n == null ? '-' : String(e.n)),
+            el('td', { class: 'num' + (best !== null && e.cer === best ? ' good' : '') }, cerText(e.cer), best !== null && e.cer === best ? el('span', { class: 'delta' }, '가장 낮음') : null),
+            el('td', { class: 'num' }, exactOf(name, e)), el('td', { class: 'num' }, sec(e.ms_median))))))) : null,
+    items.length ? [
+      el('div', { class: 'difflegend' }, el('span', {}, '실제 한 말과 비교:'), el('span', {}, el('mark', { class: 'd-wrong' }, '가나'), ' 다르게 들은 글자'),
+        el('span', {}, el('del', { class: 'd-miss' }, '가나'), ' 빠진 글자'), el('span', {}, '띄어쓰기와 문장부호는 비교하지 않습니다')),
+      el('div', { class: 'table-wrap' }, el('table', { id: 'bench-items' },
+        el('thead', {}, el('tr', {}, el('th', {}, '실제 한 말'), el('th', {}, '그때 인식'), engines.map(([name]) => el('th', {}, (ENGINE_LABEL[name] || name) + ' 다시 돌림')))),
+        el('tbody', {}, items.map(item => el('tr', { 'data-case': item.case_id },
+          el('td', { class: 'heardcell' }, item.expected || ''),
+          el('td', { class: 'heardcell' }, charDiff(item.expected, item.heard_then || '')),
+          engines.map(([name, e]) => {
+            const r = (item.results || {})[name];
+            if (!r) return el('td', { class: 'heardcell muted' }, e.available === false ? '쓸 수 없음' : run.status === 'running' ? '…' : '-');
+            if (r.error) return el('td', { class: 'heardcell bad-text' }, '인식 실패: ' + r.error);
+            return el('td', { class: 'heardcell' }, charDiff(item.expected, r.text || ''), r.text ? null : el('span', { class: 'muted' }, '(아무것도 듣지 못함)'),
+              el('small', {}, '오류율 ' + cerText(r.cer) + (r.ms != null ? ' · ' + sec(r.ms) : '')));
+          }))))))]
+      : run.status === 'running' ? null : el('p', { class: 'muted', style: 'margin-top:8px' }, '비교한 사례가 없습니다. 실제 한 말이 적힌 사례가 있어야 합니다.'));
+}
+
+async function loadBenchRuns(showLatest) {
+  const box = $('bench-runs');
+  let raw;
+  try { raw = await api('/api/asr/bench'); }
+  catch (err) {
+    errorView(box, err, '인식 모델 비교', () => loadBenchRuns(showLatest));
+    if (showLatest) stateView($('bench'), err.kind === 'missing' ? 'missing' : 'empty', err.kind === 'missing' ? { title: '인식 모델 비교 기능은 아직 쓸 수 없습니다' } : { title: '비교 결과를 불러오지 못했습니다' });
+    return;
+  }
+  const runs = asList(raw, 'runs').slice().sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+  if (!runs.length) {
+    stateView(box, 'empty', { title: '아직 비교를 돌린 적이 없습니다' });
+    if (showLatest) stateView($('bench'), 'empty', { title: '아직 비교 결과가 없습니다', hint: '사례가 하나라도 있으면 위의 "다시 돌려 비교"로 인식 모델마다 같은 음성을 넣어 볼 수 있습니다.' });
+    return;
+  }
+  setKids(box, el('div', { class: 'table-wrap' }, el('table', { id: 'bench-run-list' },
+    el('thead', {}, el('tr', {}, ['실행', '시작', '상태', '사례 수', '모델별 글자 오류율', ''].map(h => el('th', {}, h)))),
+    el('tbody', {}, runs.map(r => {
+      const [text, cls] = BENCH_STATUS[r.status] || [r.status || '', ''];
+      return el('tr', { class: r.run_id === benchShown ? 'sel' : '', 'data-run': r.run_id }, el('td', {}, r.run_id), el('td', { class: 'num', style: 'text-align:left' }, clock(r.started_at)),
+        el('td', {}, badge(text, cls)), el('td', {}, r.total == null ? '-' : String(r.total)),
+        el('td', {}, Object.entries(r.engines || {}).map(([name, e]) => (ENGINE_LABEL[name] || name) + ' ' + (e.available === false ? '쓸 수 없음' : cerText(e.cer))).join(' · ') || '-'),
+        el('td', {}, el('button', { class: 'ghost small', onclick: () => { showBench(r.run_id); $('bench').scrollIntoView({ block: 'nearest' }); } }, '결과 보기')));
+    })))));
+  if (showLatest && !benchShown) showBench(runs[0].run_id);
+}
+
+function renderChart(daily) {
+  const panel = $('trend-chart-panel'), box = $('trend-chart');
+  // WP3's by_day has one row per day for everything the filter selects; rows split by agent and version are drawn as separate lines
+  const ALL = '고른 대화 전체';
+  const seriesOf = d => (d.agent_id || d.agent) ? (d.agent_id || d.agent) + ' v' + d.version : ALL;
+  const points = daily.map(d => Object.assign({}, d, { date: d.date || d.day })).filter(d => d.response_ms_median != null && d.date);
+  panel.hidden = false;
+  if (!points.length) { stateView(box, 'empty', { title: '날짜별 자료가 없습니다', hint: '서버가 날짜별 집계를 보내지 않았거나 이 기간에 대화가 없습니다.' }); return; }
+  const dates = [...new Set(points.map(d => d.date))].sort();
+  const keys = [...new Set(points.map(seriesOf))].sort();
+  const W = 860, H = 240, L = 46, R = 16, T = 12, B = 30;
+  const maxY = Math.max(...points.map(d => d.response_ms_median)) * 1.15;
+  const x = i => L + (dates.length === 1 ? (W - L - R) / 2 : i * (W - L - R) / (dates.length - 1));
+  const y = v => T + (H - T - B) * (1 - v / maxY);
+  const ns = 'http://www.w3.org/2000/svg';
+  const s = (tag, attrs, text) => { const n = document.createElementNS(ns, tag); Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v)); if (text) n.textContent = text; return n; };
+  const svg = s('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': '날짜별 응답 지연 중앙값 선 그래프' });
+  for (let i = 0; i <= 4; i++) {
+    const v = maxY * i / 4;
+    svg.append(s('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: '#2a3a58', 'stroke-width': 1 }), s('text', { x: L - 6, y: y(v) + 4, 'text-anchor': 'end' }, (v / 1000).toFixed(1) + '초'));
+  }
+  const step = Math.ceil(dates.length / 8);
+  dates.forEach((d, i) => { if (i % step === 0) svg.append(s('text', { x: x(i), y: H - 8, 'text-anchor': 'middle' }, d.slice(5).replace('-', '/'))); });
+  keys.forEach((key, k) => {
+    const color = SERIES[k % SERIES.length];
+    const series = points.filter(d => seriesOf(d) === key).sort((a, b) => a.date.localeCompare(b.date));
+    svg.append(s('polyline', { points: series.map(d => x(dates.indexOf(d.date)) + ',' + y(d.response_ms_median)).join(' '), fill: 'none', stroke: color, 'stroke-width': 2 }));
+    series.forEach(d => { const c = s('circle', { cx: x(dates.indexOf(d.date)), cy: y(d.response_ms_median), r: 3.5, fill: color });
+      c.append(s('title', {}, key + ' · ' + d.date + ' · ' + sec(d.response_ms_median) + (d.sessions != null ? ' · 대화 ' + d.sessions + '건' : ''))); svg.append(c); });
+  });
+  setKids(box, svg, el('div', { class: 'klegend' }, keys.map((key, k) => {
+    const [agent, version] = key.split(' v');
+    return el('span', { style: '--c: ' + SERIES[k % SERIES.length] }, key === ALL ? ALL : (agentName[agent] || agent) + ' v' + version);
+  })));
+}
+
+// ---- wiring ------------------------------------------------------------------------------------
+function showTab(name) {
+  ['sessions', 'trend', 'asr'].forEach(key => {
+    $('view-' + key).hidden = key !== name;
+    $('tab-' + key).setAttribute('aria-selected', String(key === name));
+  });
+  if (name === 'trend') loadTrend();
+  if (name === 'asr') loadAsr();
+}
+
+async function init() {
+  mountNav('monitor');
+  $('tab-sessions').onclick = () => showTab('sessions');
+  $('tab-trend').onclick = () => showTab('trend');
+  $('tab-asr').onclick = () => showTab('asr');
+  $('bench-run').onclick = startBench;
+  $('a-agent').onchange = loadCases;
+  $('reload').onclick = () => loadList();
+  ['f-agent', 'f-status'].forEach(id => { $(id).onchange = () => loadList(); });
+  ['f-channel', 'f-kind', 'f-asr'].forEach(id => { $(id).onchange = () => renderList(); });
+  ['t-agent', 't-days'].forEach(id => { $(id).onchange = loadTrend; });
+  stateView($('detail-state'), 'loading', { title: '불러오는 중입니다' });
+  try {
+    agents = await loadAgents();
+    agents.forEach(a => { agentName[a.id] = a.name; });
+    fillAgentSelect($('f-agent'), agents, '', true);
+    fillAgentSelect($('t-agent'), agents, '', true);
+    fillAgentSelect($('a-agent'), agents, '', true);
+  } catch (err) { /* names fall back to ids; the list below shows what is wrong if the server is away */ }
+  $('detail-state').replaceChildren();
+  const params = new URLSearchParams(location.search), want = params.get('session');
+  if (['trend', 'asr'].includes(params.get('view'))) showTab(params.get('view'));
+  await loadList();
+  if (want && !current) openSession(want);
+  connectLive();
+}
+init();
+</script>
+</body>
+</html>

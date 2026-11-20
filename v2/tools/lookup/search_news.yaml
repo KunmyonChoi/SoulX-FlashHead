@@ -1,0 +1,23 @@
+# v1 조회 도구 (realtime_tools.Toolbox.search_news을 감쌈). 설명과 인자는 v1과 같다.
+name: search_news
+description: 인터넷에서 최신 뉴스 기사 제목을 검색한다. 뉴스, 최근 소식, 요즘 일어난 일을 물으면 사용한다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: '검색어. 예: 반도체. 분야를 가리지 않는 주요 뉴스를 원하면 빈 문자열.'
+  required:
+  - query
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 4.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 뉴스를 찾아볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.v1_lookup:search_news

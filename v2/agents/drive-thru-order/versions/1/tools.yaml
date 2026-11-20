@@ -1,0 +1,8 @@
+# 계약서는 v2/tools/<묶음>/<이름>.yaml, 연결되는 곳은 더미 햄버거 매장이다.
+#   조회: search_menu(메뉴, 가격, 품절, 알레르기 성분), get_cart(주문서)
+#   변경, 확인 없이 바로 실행: add_to_cart, remove_from_cart (확정 전이라 되돌릴 수 있다)
+#   변경, 고객 동의 필요(두 단계): submit_order
+#   직원 호출: handoff_to_human
+# 도구 묶음(v2/tools/<묶음>/): 아래 이름은 이 묶음들 안에서 찾는다
+tool_packs: [burger, common]
+tools: [search_menu, get_cart, add_to_cart, remove_from_cart, submit_order, handoff_to_human]

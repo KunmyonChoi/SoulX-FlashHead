@@ -1,0 +1,23 @@
+# v1 조회 도구 (realtime_tools.Toolbox.search_geeknews을 감쌈). 설명과 인자는 v1과 같다.
+name: search_geeknews
+description: 긱뉴스(GeekNews, news.hada.io)에 올라온 글을 찾는다. 개발, 프로그래밍, AI, 오픈소스, 스타트업 같은 기술 소식을 묻거나 '긱뉴스'를 말하면 사용한다. 최근 일주일쯤의 글에서 찾는다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: '찾을 단어 한두 개. 제품, 언어, 회사 이름은 글에 적히는 대로 영어 원어로 쓴다. 예: Claude, Rust, 에이전트. 최신 글을 그냥 보려면 빈 문자열.'
+  required:
+  - query
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 4.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 긱뉴스에서 찾아볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.v1_lookup:search_geeknews

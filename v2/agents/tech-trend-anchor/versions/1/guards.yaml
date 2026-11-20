@@ -1,0 +1,20 @@
+# v1의 LOOKUP_CLAIM / FORECAST_TEMPERATURE / WEATHER_STATEMENT 검사를 옮겼다.
+# v1의 예외는 정규식 앞머리의 부정 전방 탐색으로 옮겼다:
+#   "말씀해 주시면 찾아볼게요"(제안)는 주장이 아니다 -> (?!.*(시면|다면|으면)\s)
+#   물음표로 끝나는 문장은 날씨 진술이 아니다        -> (?!.*\?\s*$)
+guards:
+  - id: lookup_claim
+    kind: claims_lookup
+    pattern: "^(?!.*(시면|다면|으면)\\s).*((확인|찾아|알아|검색|조회)\\S{0,2}\\s?(보니|봤더니|봤는데|봤어요|봤습니다|본 결과|볼게요|보겠습니다|드릴게요)|(날씨|뉴스)를\\s?보니)"
+    unless_tools: [get_weather, search_news, get_news_detail, search_geeknews, read_geeknews, search_wikipedia, list_knowledge_by_date]
+    nudge: "(시스템 안내: 방금 도구를 호출하지 않고 날씨나 뉴스를 확인한 것처럼 말하려 했습니다. 확인이 필요하면 지금 도구를 호출하고, 필요 없으면 확인했다는 말 없이 답하세요.)"
+  - id: forecast_temperature
+    kind: claims_lookup
+    pattern: "(?:영상|영하|기온\\S*|최고|최저)\\s?(\\d+)\\s?도"
+    unless_tools: [get_weather, search_news, get_news_detail]
+    nudge: "(시스템 안내: 방금 도구를 호출하지 않고 날씨나 뉴스를 확인한 것처럼 말하려 했습니다. 확인이 필요하면 지금 도구를 호출하고, 필요 없으면 확인했다는 말 없이 답하세요.)"
+  - id: weather_statement
+    kind: claims_lookup
+    pattern: "^(?!.*\\?\\s*$).*(오늘|내일|모레|주말|이번 주|[월화수목금토일]요일)[^.?!]{0,30}(비가|비 소식|비 올|눈이|눈 소식|맑|흐리|흐려|춥|추워|추울|덥|더워|더울|쌀쌀|포근|선선|소나기|화창)"
+    unless_tools: [get_weather, search_news, get_news_detail]
+    nudge: "(시스템 안내: 방금 도구를 호출하지 않고 날씨나 뉴스를 확인한 것처럼 말하려 했습니다. 확인이 필요하면 지금 도구를 호출하고, 필요 없으면 확인했다는 말 없이 답하세요.)"

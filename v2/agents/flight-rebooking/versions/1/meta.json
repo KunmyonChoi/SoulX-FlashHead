@@ -1,0 +1,14 @@
+{
+  "agent_id": "flight-rebooking",
+  "version": 1,
+  "state": "tested",
+  "created_at": 1794906008.477,
+  "created_by": "wp1",
+  "based_on": null,
+  "note": "뼈대: 항공편 변경 (형식 확인용)",
+  "safety_change": false,
+  "changed_fields": [],
+  "test_run_id": "flight-rebooking.v1.20261118-193541-b261",
+  "approved_by": null,
+  "approved_at": null
+}

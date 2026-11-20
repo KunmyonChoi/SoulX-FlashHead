@@ -1,0 +1,27 @@
+# 카페(키오스크): 결제 요청(변경 도구, 확인 필요). 처음 호출하면 확인 문장과 확인 카드(confirm)만 나오고,
+# 고객이 다음 말에서 동의한 뒤 다시 호출해야 결제가 요청된다. 실행되면 영수증(receipt)이 나오고
+# 주문 내역이 비워지므로 get_cart로 화면의 주문 내역도 다시 그린다.
+# {summary}("아이스 아메리카노 2잔, 합계 9000원")는 더미 카페의 미리보기가 채운다.
+name: request_payment
+description: 지금 주문 내역의 결제를 요청한다. 고객이 주문을 마치고 결제하겠다고 할 때 사용한다. 인자는 없다. 처음 호출하면 결제되지 않고 고객에게 읽어 줄 확인 문장(주문 내역과 합계)이 돌아온다. 고객이 그 문장에 동의하면 다음 턴에 다시 호출해야 결제가 요청되고 주문 번호가 나온다. 주문 내역이 비어 있으면 거절된다.
+effect: write
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties:
+    order_no: {type: string, description: "주문 번호. 예: K-0012"}
+    lines: {type: array, description: "결제된 줄들. get_cart의 lines와 같은 모양"}
+    subtotal: {type: integer}
+    discount: {type: integer}
+    total: {type: integer, description: "결제 금액(원)"}
+    coupon: {type: string}
+    message: {type: string, description: "고객에게 보여 줄 안내"}
+confirm_template: "{summary} 결제를 진행할까요?"
+idempotency_fields: []
+timeout_s: 4.0
+retries: 0
+filler: "주문 내역을 확인할게요."
+display: {kind: receipt, refresh: [get_cart]}
+adapter: {kind: dummy, target: "cafe:request_payment"}

@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>제작실 · 음성 에이전트</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/web/app.css?v=screen7">
+</head>
+<body class="page-studio">
+<header class="bar">
+  <div class="brand">음성 에이전트</div>
+  <nav class="nav" id="nav" aria-label="화면"></nav>
+  <label class="bar-field">에이전트 <select id="agent" disabled></select></label>
+  <div class="bar-right"><a id="try-link" href="/" hidden>이 버전으로 대화해 보기</a></div>
+</header>
+
+<main class="studio">
+  <div class="studio-main">
+    <div id="page-state"></div>
+
+    <section class="panel" id="release" hidden aria-label="배포 단계">
+      <header><h2 id="release-title">배포 단계</h2></header>
+      <div class="deploy-line" id="deploy-line"></div>
+      <div id="rollback-confirm"></div>
+      <ol class="pipe" id="pipe"></ol>
+      <p class="muted" id="next-hint" style="font-size:13.5px;margin-top:12px"></p>
+      <div class="actions" id="actions"></div>
+      <div id="action-result" role="status"></div>
+    </section>
+
+    <section class="panel" id="versions-panel" hidden aria-label="버전 목록">
+      <header><h2>버전 <small>행을 누르면 그 버전의 단계와 시험 결과를 봅니다</small></h2></header>
+      <div class="table-wrap" id="versions"></div>
+    </section>
+
+    <section class="panel" id="diff-panel" hidden aria-label="버전 차이">
+      <header><h2>무엇이 바뀌었나</h2><span class="spacer"></span>
+        <div class="runpick"><label>바뀌기 전 <select id="diff-a"></select></label><label>바뀐 뒤 <select id="diff-b"></select></label></div></header>
+      <div id="diff"></div>
+    </section>
+
+    <section class="panel" id="tests-panel" hidden aria-label="시험">
+      <header><h2>시험 <small>가상 고객과 저장된 사례를 한 번에 돌립니다</small></h2><span class="spacer"></span>
+        <button id="run-tests" class="small">시험 실행</button></header>
+      <div id="run-start-result" role="status"></div>
+      <div class="runpick" id="runpick" hidden>
+        <label>결과를 볼 실행 <select id="run-new"></select></label>
+        <label>비교 기준 <select id="run-base"></select></label>
+      </div>
+      <div id="run-view"></div>
+      <div id="compare-view"></div>
+    </section>
+  </div>
+
+  <aside class="panel builder" aria-label="제작 에이전트">
+    <header><h2>제작 에이전트 <small>말로 정의서를 만들고 고칩니다</small></h2></header>
+    <div id="b-log" aria-live="polite"></div>
+    <label class="muted" style="font-size:13px;margin-bottom:8px" title="켜면 지금 고른 에이전트를 고치는 대신 새 에이전트를 만듭니다.">
+      <input type="checkbox" id="b-new"> 새 에이전트를 만드는 대화</label>
+    <div class="composer">
+      <textarea id="b-text" aria-label="제작 에이전트에게 보낼 말" placeholder="예: 말투를 더 짧게 해 줘" title="Enter로 전송, Shift+Enter로 줄바꿈"></textarea>
+      <button id="b-send">보내기</button>
+    </div>
+  </aside>
+</main>
+
+<script src="/web/common.js?v=screen8"></script>
+<script>
+'use strict';
+const ORDER = ['draft', 'tested', 'pending_approval', 'approved', 'deployed'];
+let agents = [], agentId = null, versions = [], deployment = null, selected = null;
+let runs = [], runTimer = null, watching = null;   // watching: run id being polled
+let definitionCache = {};
+let conversationId = null, builderOff = false;
+
+const byVersion = n => versions.find(v => v.version === n);
+// WP6 adds status (running | finished | error | interrupted) to a TestRun; without it finished_at decides
+const runEnded = r => !!r.finished_at || ['finished', 'error', 'interrupted'].includes(r.status);
+const enc = encodeURIComponent;
+
+// ---- loading -----------------------------------------------------------------------------------
+async function init() {
+  mountNav('studio');
+  stateView($('page-state'), 'loading', { title: '에이전트 목록을 불러오는 중입니다' });
+  try {
+    agents = await loadAgents();
+  } catch (err) {
+    errorView($('page-state'), err, '에이전트 정의서', init);
+    return;
+  }
+  if (!agents.length) {
+    stateView($('page-state'), 'empty', { title: '등록된 에이전트가 없습니다',
+      hint: '오른쪽 제작 에이전트에게 어떤 일을 하는 에이전트가 필요한지 설명하면 첫 초안을 만들어 줍니다.' });
+    $('b-new').checked = true;
+    return;
+  }
+  const want = new URLSearchParams(location.search);
+  if (!agentId) agentId = want.get('agent');
+  if (!agents.some(a => a.id === agentId)) agentId = agents[0].id;
+  let registered = null;
+  try {
+    const listed = await api('/api/tools');
+    registered = toolIds(listed.tools || listed || []);
+  } catch (err) { /* tools module not installed */ }
+  fillAgentSelect($('agent'), agents, agentId, false, registered);
+  $('agent').disabled = false;
+  await loadAgent(Number(want.get('version')) || null);
+}
+
+async function loadAgent(wantVersion) {
+  const id = agentId;
+  ['release', 'versions-panel', 'diff-panel', 'tests-panel'].forEach(p => { $(p).hidden = true; });
+  stateView($('page-state'), 'loading', { title: '버전 목록을 불러오는 중입니다' });
+  try {
+    await fetchAgent();
+  } catch (err) {
+    if (agentId === id) errorView($('page-state'), err, '버전 목록', () => loadAgent(wantVersion));
+    return;
+  }
+  if (agentId !== id) return;
+  $('page-state').replaceChildren();
+  if (!versions.length) {
+    stateView($('page-state'), 'empty', { title: '이 에이전트에는 아직 버전이 없습니다', hint: '제작 에이전트에게 초안을 만들어 달라고 하세요.' });
+    return;
+  }
+  ['release', 'versions-panel', 'diff-panel', 'tests-panel'].forEach(p => { $(p).hidden = false; });
+  selected = byVersion(wantVersion) ? wantVersion : Math.max(...versions.map(v => v.version));
+  $('action-result').replaceChildren();
+  renderAll();
+  await loadRuns();
+}
+
+async function fetchAgent() {
+  const info = await api('/api/agents/' + enc(agentId));
+  versions = asList(info, 'versions').slice().sort((a, b) => b.version - a.version);
+  deployment = (info && info.deployment) || null;
+}
+
+async function refresh() {
+  try { await fetchAgent(); } catch (err) { return; }
+  if (!byVersion(selected) && versions.length) selected = versions[0].version;
+  renderAll();
+}
+
+function renderAll() {
+  renderDeployment(); renderPipe(); renderVersions(); fillDiffSelects(); loadDiff();
+  $('run-tests').textContent = 'v' + selected + ' 시험 실행';
+  $('try-link').hidden = false;
+  $('try-link').href = '/' + qs({ agent: agentId, version: selected, test: 1 });
+  $('try-link').textContent = 'v' + selected + '로 대화해 보기';
+}
+
+async function definitionOf(version) {
+  const key = agentId + '/' + version;
+  if (!(key in definitionCache)) {
+    try { const body = await api('/api/agents/' + enc(agentId) + '/versions/' + version); definitionCache[key] = (body && body.definition) || body; }
+    catch (err) { return null; }
+  }
+  return definitionCache[key];
+}
+
+// ---- release pipeline --------------------------------------------------------------------------
+function renderDeployment() {
+  const d = deployment || {};
+  const parts = [];
+  if (d.stable) parts.push(el('span', {}, '지금 대화를 받는 버전 ', el('b', {}, 'v' + d.stable), d.canary ? ' (' + (100 - (d.canary_percent || 0)) + '%)' : ''));
+  else parts.push(el('span', { class: 'muted' }, '아직 배포된 버전이 없습니다. 승인된 버전을 배포하면 대화를 받기 시작합니다.'));
+  if (d.canary) parts.push(el('span', {}, '일부 대화에 먼저 적용 중 ', el('b', {}, 'v' + d.canary + ' · ' + d.canary_percent + '%')));
+  if (d.stable) parts.push(el('span', { class: 'muted' }, d.canary ? '되돌리면 일부 적용을 거둡니다' : d.previous_stable ? '되돌리면 v' + d.previous_stable + '로 돌아갑니다' : '되돌아갈 이전 버전이 없습니다'));
+  if (d.stable) parts.push(el('button', { class: 'danger small', id: 'rollback', onclick: askRollback }, '이전 버전으로 되돌림'));
+  setKids($('deploy-line'), ...parts);
+  $('rollback-confirm').replaceChildren();
+}
+
+function renderPipe() {
+  const v = byVersion(selected);
+  if (!v) return;
+  const d = deployment || {};
+  const cur = v.state === 'retired' ? 5 : ORDER.indexOf(v.state);
+  setKids($('release-title'), 'v' + v.version + ' 배포 단계 ', badge(STATE_LABEL[v.state] || v.state, STATE_CLASS[v.state]),
+    v.safety_change ? [' ', badge('안전 규칙 변경', 'b-safety', '도구 권한, 넘김 조건, 금지 사항, 검사 규칙, 개인정보 규칙 중 하나가 바뀌었습니다')] : null);
+  const run = runs.find(r => r.run_id === v.test_run_id);
+  const sub = {
+    draft: (v.created_by ? (v.created_by === 'builder' ? '제작 에이전트' : v.created_by) + ' · ' : '') + clock(v.created_at),
+    tested: v.test_run_id ? (run ? '통과 ' + pct(run.pass_rate) + (run.safety_failures ? ' · 안전 실패 ' + run.safety_failures : '') : '결과 붙음') : '시험 결과 없음',
+    pending_approval: cur === 2 ? '사람의 승인을 기다림' : '',
+    approved: v.approved_by ? v.approved_by + ' · ' + clock(v.approved_at) : '',
+    deployed: d.stable === v.version ? '모든 대화' + (d.canary ? '의 ' + (100 - d.canary_percent) + '%' : '') : d.canary === v.version ? '대화의 ' + d.canary_percent + '%' : v.state === 'retired' ? '물러남' : '',
+  };
+  setKids($('pipe'), ...ORDER.map((state, i) => el('li', { class: (i < cur ? 'done' : i === cur ? 'now' + (state === 'deployed' ? ' end' : '') : ''), 'data-step': state },
+    el('div', { class: 'dot' }), el('div', { class: 'nm' }, STATE_LABEL[state]), el('small', {}, sub[state] || ''))));
+  $('next-hint').textContent = {
+    draft: '다음 단계: 시험을 실행합니다. 시험 결과가 붙어야 승인을 요청할 수 있습니다.',
+    tested: '다음 단계: 시험 결과를 확인하고 승인을 요청합니다.',
+    pending_approval: '다음 단계: 사람이 승인합니다. 제작 에이전트는 승인할 수 없습니다. 실패한 안전 기준이 있으면 승인이 막힙니다.',
+    approved: '다음 단계: 배포합니다. 100%보다 작게 하면 일부 대화에만 먼저 적용됩니다.',
+    deployed: '이 버전이 대화를 받고 있습니다. 적용 비율을 바꾸려면 다시 배포하세요.',
+    retired: '물러난 버전입니다. 고치려면 이 버전을 바탕으로 새 초안을 만드세요.',
+  }[v.state] || '';
+
+  const primary = { draft: 'test', tested: 'submit', pending_approval: 'approve', approved: 'deploy', deployed: 'deploy' }[v.state];
+  const cls = key => 'small' + (key === primary ? '' : ' ghost');
+  const approver = el('input', { type: 'text', id: 'approver', placeholder: '승인자 이름', 'aria-label': '승인자 이름', autocomplete: 'name' });
+  const percent = el('input', { type: 'number', id: 'percent', min: '1', max: '100', value: '100', 'aria-label': '적용할 대화 비율(%)' });
+  setKids($('actions'), 
+    el('button', { class: cls('test'), id: 'act-test', onclick: startRun }, '시험 실행'),
+    el('button', { class: cls('submit'), id: 'act-submit', onclick: () => release('submit', {}, 'v' + v.version + '의 승인을 요청했습니다.') }, '승인 요청'),
+    el('span', { class: 'inline' }, approver,
+      el('button', { class: cls('approve'), id: 'act-approve', onclick: () => {
+        const name = approver.value.trim();
+        if (!name) { showResult('bad', '승인자 이름을 입력하세요', '누가 승인했는지 기록에 남습니다.'); approver.focus(); return; }
+        release('approve', { approver: name }, 'v' + v.version + '을(를) ' + name + ' 님 이름으로 승인했습니다.');
+      } }, '승인')),
+    el('span', { class: 'inline' }, el('label', {}, '대화의', percent, '%에'),
+      el('button', { class: cls('deploy'), id: 'act-deploy', onclick: () => {
+        const p = Math.round(Number(percent.value));
+        if (!(p >= 1 && p <= 100)) { showResult('bad', '비율은 1에서 100 사이로 입력하세요', ''); percent.focus(); return; }
+        release('deploy', { percent: p }, p < 100 ? 'v' + v.version + '을(를) 대화의 ' + p + '%에 먼저 적용했습니다.' : 'v' + v.version + '을(를) 모든 대화에 배포했습니다.');
+      } }, '배포')));
+}
+
+function showResult(kind, title, text) {
+  setKids($('action-result'), el('div', { class: 'notice ' + kind }, el('strong', {}, title), text || ''));
+}
+
+function showFailure(err, doing) {
+  if (err.kind === 'refused') showResult('bad', '서버가 거절했습니다', err.message);
+  else if (err.kind === 'missing') showResult('', doing + ' 기능은 아직 쓸 수 없습니다', '서버에 이 기능을 맡은 모듈이 설치되지 않았습니다.');
+  else if (err.kind === 'unreachable') showResult('bad', '서버에 연결할 수 없습니다', '서버가 켜져 있는지 확인한 뒤 다시 누르세요. 아무것도 바뀌지 않았습니다.');
+  else showResult('bad', doing + '에 실패했습니다', err.message);
+}
+
+async function release(step, body, done) {
+  const buttons = [...$('actions').querySelectorAll('button')];
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    await api('/api/releases/' + enc(agentId) + '/' + selected + '/' + step, { method: 'POST', body });
+    await refresh();
+    showResult('good', done, '');
+  } catch (err) {
+    buttons.forEach(b => { b.disabled = false; });
+    showFailure(err, { submit: '승인 요청', approve: '승인', deploy: '배포' }[step]);
+  }
+}
+
+function askRollback() {
+  const d = deployment || {};
+  const what = d.canary ? 'v' + d.canary + '의 일부 적용을 거두고 v' + d.stable + '만 대화를 받게 합니다.'
+    : d.previous_stable ? '대화를 받는 버전을 v' + d.stable + '에서 v' + d.previous_stable + '로 되돌립니다.' : '되돌릴 이전 버전이 기록에 없습니다. 서버가 거절할 수 있습니다.';
+  setKids($('rollback-confirm'), el('div', { class: 'notice bad', style: 'margin-top:10px' }, el('strong', {}, '되돌릴까요?'), what,
+    el('div', { class: 'actions', style: 'margin-top:8px' },
+      el('button', { class: 'danger small', id: 'rollback-yes', onclick: rollback }, '되돌림 실행'),
+      el('button', { class: 'ghost small', onclick: () => $('rollback-confirm').replaceChildren() }, '취소'))));
+  $('rollback-yes').focus();
+}
+
+async function rollback() {
+  $('rollback-confirm').replaceChildren();
+  try {
+    await api('/api/releases/' + enc(agentId) + '/rollback', { method: 'POST', body: {} });
+    await refresh();
+    showResult('good', '되돌렸습니다', deployment && deployment.stable ? '지금 v' + deployment.stable + '이(가) 대화를 받습니다.' : '');
+  } catch (err) { showFailure(err, '되돌림'); }
+}
+
+// ---- version list ------------------------------------------------------------------------------
+function renderVersions() {
+  const d = deployment || {};
+  const rows = versions.map(v => {
+    const run = runs.find(r => r.run_id === v.test_run_id);
+    const role = d.stable === v.version ? badge('대화 받는 중', 'b-live') : d.canary === v.version ? badge('일부 적용 ' + d.canary_percent + '%', 'b-out') : null;
+    return el('tr', { class: 'pick' + (v.version === selected ? ' sel' : ''), 'data-version': v.version, onclick: () => select(v.version) },
+      el('td', {}, el('button', { class: 'vbtn', 'aria-pressed': String(v.version === selected), title: 'v' + v.version + ' 보기' }, 'v' + v.version)),
+      el('td', {}, badge(STATE_LABEL[v.state] || v.state, STATE_CLASS[v.state]), role ? [' ', role] : null),
+      el('td', {}, v.note || el('span', { class: 'muted' }, '(설명 없음)'),
+        v.safety_change ? [' ', badge('안전 규칙 변경', 'b-safety')] : null,
+        (v.changed_fields || []).length ? el('div', { class: 'muted', style: 'font-size:12.5px' }, '바뀐 항목: ' + v.changed_fields.map(fieldLabel).join(', ')) : null),
+      el('td', {}, (v.created_by === 'builder' ? '제작 에이전트' : v.created_by || '-'), el('div', { class: 'muted', style: 'font-size:12.5px;white-space:nowrap' },
+        clock(v.created_at) + (v.based_on ? ' · v' + v.based_on + ' 바탕' : ''))),
+      el('td', {}, v.test_run_id ? (run ? el('span', { class: run.safety_failures ? 'bad-text' : '' }, '통과 ' + pct(run.pass_rate) + (run.safety_failures ? ' · 안전 실패 ' + run.safety_failures : '')) : '결과 붙음')
+        : el('span', { class: 'muted' }, '시험 전')),
+      el('td', {}, v.approved_by ? [v.approved_by, el('div', { class: 'muted', style: 'font-size:12.5px' }, clock(v.approved_at))] : el('span', { class: 'muted' }, '-')));
+  });
+  setKids($('versions'), el('table', {},
+    el('thead', {}, el('tr', {}, ['버전', '상태', '바뀐 내용', '만든 이', '시험', '승인'].map(h => el('th', {}, h)))), el('tbody', {}, rows)));
+}
+
+function select(version) {
+  if (version === selected) return;
+  selected = version;
+  $('action-result').replaceChildren();
+  renderAll();
+  pickRuns();
+}
+
+function fieldLabel(key) {
+  const [top, ...rest] = String(key).split('.');
+  const SUB = { success: '성공 기준', extract: '뽑을 정보', latency_budget_ms: '지연 기준', personas: '가상 고객', cases: '저장된 사례' };
+  return (FIELD_LABEL[top] || top) + (rest.length ? ' · ' + rest.map(r => SUB[r] || r).join(' · ') : '');
+}
+
+// ---- diff --------------------------------------------------------------------------------------
+function fillDiffSelects() {
+  const v = byVersion(selected);
+  const others = versions.filter(x => x.version !== selected);
+  const base = v && v.based_on && byVersion(v.based_on) ? v.based_on
+    : (others.filter(x => x.version < selected)[0] || others[0] || {}).version;
+  const fill = (select, chosen) => setKids(select, ...versions.map(x =>
+    new Option('v' + x.version + ' · ' + (STATE_LABEL[x.state] || x.state), String(x.version), false, x.version === chosen)));
+  fill($('diff-a'), base); fill($('diff-b'), selected);
+}
+
+function fmtValue(value) {
+  if (value === null || value === undefined) return '(없음)';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    if (!value.length) return '(비어 있음)';
+    return value.map(item => {
+      if (typeof item === 'string') return '· ' + item;
+      if (item && typeof item === 'object') {
+        const head = item.id || item.name, body = item.rule || item.when || item.pattern || item.goal || item.description;
+        if (head && body) return '· ' + head + ': ' + body + (item.safety ? ' [안전 기준]' : '') + (item.pii ? ' [개인정보]' : '');
+      }
+      return '· ' + JSON.stringify(item);
+    }).join('\n');
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+function isSafetyChange(key, change, safetyFields) {
+  const top = String(key).split('.')[0];
+  if (safetyFields) return safetyFields.includes(key) || safetyFields.includes(top);
+  if (SAFETY_FIELDS.includes(top)) return true;
+  // a safety criterion or a personal-data field added, removed or changed
+  const flagged = side => JSON.stringify((Array.isArray(side) ? side : (side && (side.success || []).concat(side.extract || [])) || [])
+    .filter(x => x && (x.safety || x.pii)));
+  return top === 'evaluation' && flagged(change.before) !== flagged(change.after);
+}
+
+async function loadDiff() {
+  const a = $('diff-a').value, b = $('diff-b').value, box = $('diff');
+  if (versions.length < 2) { stateView(box, 'empty', { title: '비교할 다른 버전이 없습니다', hint: '버전이 둘 이상이 되면 바뀐 항목을 여기서 봅니다.' }); return; }
+  if (a === b) { stateView(box, 'empty', { title: '같은 버전을 골랐습니다', hint: '바뀌기 전과 바뀐 뒤에 서로 다른 버전을 고르세요.' }); return; }
+  stateView(box, 'loading', { title: '두 버전을 비교하는 중입니다' });
+  let body;
+  try { body = await api('/api/agents/' + enc(agentId) + '/diff' + qs({ a, b })); }
+  catch (err) { errorView(box, err, '버전 비교', loadDiff); return; }
+  if ($('diff-a').value !== a || $('diff-b').value !== b) return;
+  const changes = (body && (body.changes || body.diff)) || body || {};
+  const safetyFields = body && Array.isArray(body.safety_fields) ? body.safety_fields : null;
+  const entries = Object.entries(changes).filter(([, c]) => c && typeof c === 'object' && ('before' in c || 'after' in c))
+    .map(([key, c]) => ({ key, c, safety: isSafetyChange(key, c, safetyFields) }))
+    .sort((x, y) => y.safety - x.safety);
+  if (!entries.length) { stateView(box, 'empty', { title: 'v' + a + '과 v' + b + '의 정의서가 같습니다' }); return; }
+  const safetyCount = entries.filter(e => e.safety).length;
+  setKids(box, 
+    safetyCount ? el('div', { class: 'notice bad', id: 'diff-safety', style: 'margin-bottom:12px' }, el('strong', {}, '안전 규칙이 ' + safetyCount + '곳 바뀌었습니다'),
+      '도구 권한, 넘김 조건, 금지 사항, 검사 규칙, 안전 기준, 개인정보 항목의 변경은 승인 전에 따로 확인하세요.') : null,
+    el('div', { class: 'diff' }, entries.map(({ key, c, safety }) => el('div', { class: 'diff-item' + (safety ? ' safety' : ''), 'data-field': key },
+      el('div', { class: 'dh' }, fieldLabel(key), safety ? badge('안전 규칙 변경', 'b-safety') : null),
+      el('div', { class: 'diff-cols' },
+        el('div', { class: 'before' }, el('div', { class: 'lab' }, 'v' + a + ' (바뀌기 전)'), el('pre', {}, fmtValue(c.before))),
+        el('div', { class: 'after' }, el('div', { class: 'lab' }, 'v' + b + ' (바뀐 뒤)'), el('pre', {}, fmtValue(c.after))))))));
+}
+
+// ---- tests -------------------------------------------------------------------------------------
+async function loadRuns(keepChoice) {
+  const id = agentId;
+  let raw;
+  try { raw = await api('/api/tests/runs' + qs({ agent: id })); }
+  catch (err) {
+    if (agentId !== id) return;
+    runs = []; $('runpick').hidden = true; $('compare-view').replaceChildren();
+    errorView($('run-view'), err, '시험', () => loadRuns());
+    $('run-tests').disabled = err.kind === 'missing';
+    return;
+  }
+  if (agentId !== id) return;
+  $('run-tests').disabled = false;
+  runs = asList(raw, 'runs').slice().sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+  renderPipe(); renderVersions();   // pass rates sit next to the versions
+  pickRuns(keepChoice);
+}
+
+const runLabel = r => 'v' + r.version + ' · ' + clock(r.started_at) + (r.status === 'error' || r.status === 'interrupted' ? ' · 중단됨' : runEnded(r) ? ' · 통과 ' + pct(r.pass_rate) : ' · 실행 중');
+
+function pickRuns(keepChoice) {
+  if (!runs.length) {
+    $('runpick').hidden = true; $('compare-view').replaceChildren();
+    stateView($('run-view'), 'empty', { title: '아직 시험을 돌린 적이 없습니다', hint: '"시험 실행"을 누르면 정의서에 적힌 가상 고객과 저장된 사례가 이 버전과 대화합니다.' });
+    return;
+  }
+  const v = byVersion(selected), d = deployment || {};
+  const keepNew = keepChoice && $('run-new').value, keepBase = keepChoice ? $('run-base').value : null;
+  const mine = runs.find(r => r.run_id === (v && v.test_run_id)) || runs.find(r => r.version === selected);
+  const chosen = keepNew || (mine || runs[0]).run_id;
+  const chosenRun = runs.find(r => r.run_id === chosen) || runs[0];
+  const baseVersion = (v && v.based_on) || d.stable;
+  const stableRun = runs.find(r => r.version === baseVersion && r.run_id !== chosenRun.run_id && runEnded(r))
+    || runs.find(r => r.version === d.stable && r.run_id !== chosenRun.run_id && runEnded(r));
+  const base = keepBase !== null ? keepBase : (stableRun ? stableRun.run_id : '');
+  $('runpick').hidden = false;
+  setKids($('run-new'), ...runs.map(r => new Option(runLabel(r), r.run_id, false, r.run_id === chosenRun.run_id)));
+  setKids($('run-base'), new Option('비교하지 않음', ''), ...runs.filter(runEnded).map(r => new Option(runLabel(r), r.run_id, false, r.run_id === base)));
+  showRun();
+}
+
+async function startRun() {
+  const version = selected;
+  $('run-tests').disabled = true;
+  $('run-start-result').replaceChildren();
+  try {
+    const body = await api('/api/tests/run', { method: 'POST', body: { agent: agentId, version } });
+    const runId = body && (body.run_id || (body.run && body.run.run_id));
+    $('tests-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    await loadRuns();
+    if (runId && runs.some(r => r.run_id === runId)) { $('run-new').value = runId; showRun(); }
+    else if (runId) watch(runId);
+  } catch (err) {
+    const text = err.kind === 'refused' ? ['서버가 거절했습니다', err.message]
+      : err.kind === 'missing' ? ['시험 기능은 아직 쓸 수 없습니다', '서버에 평가 모듈이 설치되지 않았습니다.']
+      : err.kind === 'unreachable' ? ['서버에 연결할 수 없습니다', '서버가 켜져 있는지 확인한 뒤 다시 누르세요.'] : ['시험을 시작하지 못했습니다', err.message];
+    setKids($('run-start-result'), el('div', { class: 'notice bad', style: 'margin-bottom:10px' }, el('strong', {}, text[0]), text[1]));
+    showResult('bad', text[0], text[1]);
+  } finally { $('run-tests').disabled = false; }
+}
+
+function showRun() { watch($('run-new').value); }
+
+async function watch(runId) {
+  clearTimeout(runTimer);
+  watching = runId;
+  let run;
+  try { run = await api('/api/tests/runs/' + enc(runId)); }
+  catch (err) { if (watching === runId) errorView($('run-view'), err, '시험 결과', () => watch(runId)); return; }
+  if (watching !== runId) return;
+  const definition = await definitionOf(run.version);
+  if (watching !== runId) return;
+  const tests = (definition && definition.tests) || {};
+  const total = typeof run.total === 'number' ? run.total : (tests.personas || []).length + (tests.cases || []).length;
+  let comparison = null, compareProblem = null;
+  const baseId = $('run-base').value;
+  if (runEnded(run) && baseId && baseId !== runId) {
+    try { comparison = await api('/api/tests/compare' + qs({ base: baseId, new: runId })); }
+    catch (err) { compareProblem = err; }
+    if (watching !== runId) return;
+  }
+  renderRun(run, total, comparison);
+  renderComparison(run, baseId, comparison, compareProblem);
+  if (!runEnded(run)) runTimer = setTimeout(() => watch(runId), 1200);
+  else if (runs.some(r => r.run_id === runId && !runEnded(r)) || !runs.some(r => r.run_id === runId)) {
+    await refresh();            // a finished run moves a draft to "tested"
+    await loadRuns(true);
+  }
+}
+
+function renderRun(run, total, comparison) {
+  const items = run.items || [], done = runEnded(run), broken = run.status === 'error' || run.status === 'interrupted';
+  const passed = items.filter(i => i.passed).length;
+  const change = {};
+  if (comparison) {
+    (comparison.improved || []).forEach(id => { change[id] = ['좋아짐', 'b-back']; });
+    (comparison.regressed || []).forEach(id => { change[id] = ['나빠짐', 'b-live']; });
+    (comparison.unchanged_pass || []).concat(comparison.unchanged_fail || []).forEach(id => { change[id] = ['그대로', '']; });
+  }
+  const share = done ? 100 : total ? Math.min(99, items.length / total * 100) : 5;
+  const head = el('div', { id: 'run-summary' },
+    el('div', { style: 'display:flex;gap:6px 12px;flex-wrap:wrap;align-items:center' },
+      el('b', {}, 'v' + run.version + ' 시험'),
+      broken ? badge(run.status === 'error' ? '오류로 중단됨' : '서버가 다시 시작되어 중단됨', 'b-live')
+        : done ? badge('끝남 · 통과 ' + pct(run.pass_rate), run.safety_failures ? 'b-live' : 'b-back') : badge('실행 중', 'b-out'),
+      run.safety_failures ? badge('안전 기준 실패 ' + run.safety_failures + '건', 'b-safety', '실패한 안전 기준이 있으면 승인이 막힙니다') : null,
+      el('span', { class: 'muted num', style: 'font-size:13px' }, done ? items.length + '개 중 ' + passed + '개 통과 · ' + clock(run.started_at)
+        : items.length + (total ? ' / ' + total : '') + '개 끝남 · 가상 고객이 대화하는 중입니다')),
+    el('div', { class: 'progress' + (done ? ' done' : ''), role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(share)), 'aria-label': '시험 진행' },
+      el('div', { style: 'width:' + share + '%' })),
+    broken ? el('div', { class: 'notice bad' }, el('strong', {}, '이 시험은 끝까지 돌지 못했습니다'), (run.error ? run.error + ' ' : '') + '아래는 중단되기 전까지의 결과입니다. 다시 실행하세요.') : null,
+    (run.skipped || []).length ? el('div', { class: 'muted', style: 'font-size:12.5px' }, '건너뛴 항목: ' + run.skipped.map(x => typeof x === 'string' ? x : x.item_id || x.id || JSON.stringify(x)).join(', ')) : null);
+  const rows = items.map(item => {
+    const failedSafety = (item.criteria || []).filter(c => c.safety && c.passed === false);
+    const failed = (item.criteria || []).filter(c => c.passed === false);
+    return el('tr', { 'data-item': item.item_id },
+      el('td', {}, item.item_id), el('td', {}, item.kind === 'case' ? '저장된 사례' : '가상 고객'),
+      el('td', {}, item.passed ? badge('통과', 'b-back') : badge('실패', 'b-live')),
+      comparison ? el('td', {}, change[item.item_id] ? badge(change[item.item_id][0], change[item.item_id][1]) : badge('새 항목')) : null,
+      el('td', {}, (item.mismatches || []).length ? item.mismatches.join(', ') : el('span', { class: 'muted' }, '-'),
+        failed.length ? el('details', {}, el('summary', { class: 'muted', style: 'font-size:12.5px;cursor:pointer' }, '실패한 기준 ' + failed.length + '개의 이유'),
+          failed.map(c => el('div', { class: 'muted', style: 'font-size:12.5px' }, c.id + ': ' + (c.reason || '')))) : null),
+      el('td', {}, failedSafety.length ? failedSafety.map(c => badge(c.id, 'b-safety')) : el('span', { class: 'muted' }, '-')),
+      el('td', { class: 'num' }, sec((item.metrics || {}).response_ms_median)),
+      el('td', {}, item.session_id ? el('a', { href: '/monitor' + qs({ session: item.session_id }) }, '대화 보기') : '-'));
+  });
+  setKids($('run-view'), head,
+    items.length ? el('div', { class: 'table-wrap' }, el('table', { id: 'run-table' },
+      el('thead', {}, el('tr', {}, ['항목', '종류', '결과', comparison ? '기준 대비' : null, '기대와 어긋난 기준', '안전 기준 실패', '응답 지연', '대화'].filter(Boolean)
+        .map(h => el('th', { class: h === '응답 지연' ? 'num' : '' }, h)))),
+      el('tbody', {}, rows)))
+      : el('div', { class: 'stateview' }, done ? el('strong', {}, '이 버전의 정의서에 시험 항목이 없습니다') : '첫 대화가 끝나면 결과가 한 줄씩 나타납니다.'));
+}
+
+function renderComparison(run, baseId, comparison, problem) {
+  const box = $('compare-view');
+  if (!baseId || baseId === run.run_id) { box.replaceChildren(); return; }
+  const base = runs.find(r => r.run_id === baseId);
+  const title = el('h3', {}, '전후 비교', el('small', {}, (base ? 'v' + base.version : '기준') + ' → v' + run.version));
+  if (!runEnded(run)) { setKids(box, title, el('p', { class: 'muted' }, '시험이 끝나면 비교표가 나옵니다.')); return; }
+  if (problem) { const holder = el('div', {}); setKids(box, title, holder); errorView(holder, problem, '시험 비교', showRun); return; }
+  if (!comparison) { box.replaceChildren(); return; }
+  const cell = (cls, label, list) => el('div', { class: cls, 'data-group': cls },
+    el('div', { class: 'n' }, String((list || []).length)), el('div', { class: 'lab' }, label),
+    el('ul', {}, (list || []).map(id => el('li', {}, id))));
+  const metrics = Object.entries(comparison.metric_changes || {});
+  const lowerBetter = name => /_ms|failure|interruptions/.test(name) ? true : /pass_rate/.test(name) ? false : null;
+  setKids(box, title,
+    (comparison.regressed || []).length ? el('div', { class: 'notice bad' }, el('strong', {}, '나빠진 항목이 ' + comparison.regressed.length + '개 있습니다'), '승인을 요청하기 전에 아래 항목의 대화를 확인하세요.') : null,
+    el('div', { class: 'cmp-grid', id: 'cmp-grid' },
+      cell('improved', '좋아짐 (실패 → 통과)', comparison.improved), cell('regressed', '나빠짐 (통과 → 실패)', comparison.regressed),
+      cell('same-pass', '계속 통과', comparison.unchanged_pass), cell('same-fail', '계속 실패', comparison.unchanged_fail)),
+    metrics.length ? el('div', { class: 'table-wrap' }, el('table', { id: 'cmp-metrics' },
+      el('thead', {}, el('tr', {}, el('th', {}, '지표'), el('th', { class: 'num' }, base ? 'v' + base.version : '기준'), el('th', { class: 'num' }, 'v' + run.version), el('th', { class: 'num' }, '변화'))),
+      el('tbody', {}, metrics.map(([name, pair]) => {
+        const [before, after] = pair || [], d = after - before, lb = lowerBetter(name);
+        const good = lb === null || !d ? null : (d < 0) === lb;
+        return el('tr', {}, el('td', {}, METRIC_LABEL[name] || name), el('td', { class: 'num' }, metricText(name, before)), el('td', { class: 'num' }, metricText(name, after)),
+          el('td', { class: 'num ' + (good === null ? 'muted' : good ? 'good' : 'bad-text') }, !d ? '변화 없음' : (d > 0 ? '▲ ' : '▼ ') + metricText(name, Math.abs(d)).replace('%', '%p') + (good === null ? '' : good ? ' 좋아짐' : ' 나빠짐')));
+      })))) : null);
+}
+
+// ---- builder agent chat ------------------------------------------------------------------------
+function builderHint() {
+  stateView($('b-log'), 'empty', { title: '무엇을 만들거나 고칠지 말로 설명하세요',
+    hint: '제작 에이전트는 초안만 고칩니다. 운영 중인 버전은 바뀌지 않고, 승인과 배포는 사람이 합니다.',
+    action: el('div', { style: 'display:flex;flex-direction:column;gap:6px;align-items:flex-start;margin-top:6px' },
+      ['환불 금액이 5만 원을 넘으면 사람에게 넘겨', '말투를 더 짧게 해 줘', '본인 확인을 건너뛰는 문제를 고쳐 봐'].map(text =>
+        el('button', { class: 'ghost small', style: 'margin:0;text-align:left', onclick: () => { $('b-text').value = text; $('b-text').focus(); } }, text))) });
+}
+
+function bAdd(node) {
+  const log = $('b-log');
+  if (log.querySelector('.stateview:not(.keep)')) log.replaceChildren();
+  log.append(node);
+  log.scrollTop = log.scrollHeight;
+  return node;
+}
+
+async function builderSend() {
+  const message = $('b-text').value.trim();
+  if (!message || builderOff) return;
+  $('b-text').value = '';
+  bAdd(el('div', { class: 'msg user' }, message));
+  const waiting = bAdd(el('div', { class: 'msg assistant' }));
+  $('b-send').disabled = true;
+  const body = { message };
+  if (!$('b-new').checked && agentId) body.agent = agentId;
+  if (conversationId) body.conversation_id = conversationId;
+  try {
+    const r = await api('/api/builder/chat', { method: 'POST', body, timeout: 300000 }) || {};
+    conversationId = r.conversation_id || conversationId;
+    waiting.textContent = r.reply || r.message || r.text || '(답이 비어 있습니다)';
+    const changed = r.changed_fields || [];
+    if (r.version || r.safety_change || changed.length) {
+      bAdd(el('div', { class: 'b-meta' },
+        r.version ? badge('초안 v' + r.version, 'b-out') : null,
+        r.safety_change ? badge('안전 규칙 변경', 'b-safety') : null,
+        changed.length ? '바뀐 항목: ' + changed.map(fieldLabel).join(', ') : null));
+    }
+    const target = r.agent_id || r.agent;
+    if (target && target !== agentId) {       // a new agent was created
+      agentId = target; $('b-new').checked = false; definitionCache = {};
+      await init();
+    } else if (agentId) {
+      delete definitionCache[agentId + '/' + r.version];
+      await refresh();
+      if (r.version && byVersion(r.version)) select(r.version);
+      await loadRuns(true);
+    }
+  } catch (err) {
+    waiting.remove();
+    if (err.kind === 'missing') {
+      builderOff = true;
+      const box = bAdd(el('div', {}));
+      stateView(box, 'missing', { title: '제작 에이전트는 아직 쓸 수 없습니다',
+        hint: '서버에 제작 에이전트 모듈이 설치되지 않았습니다. 버전 보기, 시험, 승인, 배포는 그대로 쓸 수 있습니다.' }).classList.add('keep');
+      $('b-text').disabled = true; $('b-text').placeholder = '제작 에이전트가 설치되면 쓸 수 있습니다.';
+      return;
+    }
+    bAdd(el('div', { class: 'notice bad' }, el('strong', {}, err.kind === 'unreachable' ? '서버에 연결할 수 없습니다' : '제작 에이전트가 답하지 못했습니다'),
+      err.kind === 'unreachable' ? '서버가 켜져 있는지 확인한 뒤 다시 보내세요.' : err.message));
+    $('b-text').value = message;
+  } finally { $('b-send').disabled = builderOff; }
+}
+
+// ---- wiring ------------------------------------------------------------------------------------
+$('agent').onchange = () => { agentId = $('agent').value; conversationId = null; clearTimeout(runTimer); watching = null;
+  history.replaceState(null, '', location.pathname + qs({ agent: agentId })); loadAgent(); };
+$('diff-a').onchange = loadDiff; $('diff-b').onchange = loadDiff;
+$('run-tests').onclick = startRun;
+$('run-new').onchange = showRun; $('run-base').onchange = showRun;
+$('b-send').onclick = builderSend;
+$('b-text').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); builderSend(); } };
+builderHint();
+init();
+</script>
+</body>
+</html>

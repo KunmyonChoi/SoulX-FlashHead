@@ -1,0 +1,23 @@
+# 카페(키오스크): 쿠폰 적용(변경 도구, 확인 단계 없음). 적용한 뒤 get_cart로 화면을 다시 그린다.
+name: apply_coupon
+description: 주문에 쿠폰을 적용한다. 고객이 쿠폰 코드를 말했을 때 사용한다. 쿠폰은 한 장만 쓸 수 있고, 다른 쿠폰을 적용하면 앞의 쿠폰과 바뀐다. 없는 코드이거나 조건이 맞지 않으면 적용되지 않고 이유가 돌아온다.
+effect: write
+input_schema:
+  type: object
+  properties:
+    code: {type: string, description: "고객이 말한 쿠폰 코드. 예: WELCOME10"}
+  required: [code]
+output_schema:
+  type: object
+  properties:
+    code: {type: string}
+    name: {type: string, description: "쿠폰 설명"}
+    discount: {type: integer, description: "지금 주문에서 할인되는 금액(원)"}
+    replaced: {type: string, description: "바뀐 이전 쿠폰 코드. 없으면 null"}
+    cart: {type: object, description: "적용한 뒤의 주문 내역. get_cart와 같은 모양"}
+idempotency_fields: []
+timeout_s: 4.0
+retries: 0
+filler: "쿠폰을 확인할게요."
+display: {kind: cart, path: cart, refresh: [get_cart]}
+adapter: {kind: dummy, target: "cafe:apply_coupon"}

@@ -1,0 +1,1152 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>실시간 대화 아바타</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+  /* A broadcast gallery: the on-air monitor on the left, the signal path behind it on the right.
+     Amber = a request going out, teal = data coming back, red = on air. */
+  :root {
+    color-scheme: dark;
+    --studio: #0c1424; --panel: #131e33; --raised: #1b2942; --line: #2a3a58;
+    --text: #e9eef7; --muted: #8fa0bf; --faint: #5d6d8c;
+    --out: #ffb341; --back: #5ad6c8; --live: #ff5a4f; --mine: #2b4c8c;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--studio); color: var(--text);
+         font: 15px/1.55 "IBM Plex Sans KR", system-ui, -apple-system, "Noto Sans KR", sans-serif; }
+  [hidden] { display: none !important; }
+  button { font: inherit; font-weight: 600; padding: 9px 20px; border: 0; border-radius: 8px;
+           background: var(--text); color: var(--studio); cursor: pointer; }
+  button.on { background: var(--live); color: #fff; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible, label:focus-within {
+    outline: 2px solid var(--back); outline-offset: 2px; }
+  textarea, select, input[type=number] { font: inherit; color: inherit; background: var(--studio);
+           border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  label { display: inline-flex; align-items: center; gap: 7px; }
+
+  /* top bar */
+  .bar { display: flex; align-items: center; gap: 18px; padding: 12px 22px; border-bottom: 1px solid var(--line);
+         flex-wrap: wrap; }
+  .brand { font-size: 17px; font-weight: 700; letter-spacing: -0.2px; margin-right: 6px; }
+  .modes { display: flex; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 3px; flex-wrap: wrap; }
+  .modes label { padding: 6px 13px; border-radius: 7px; cursor: pointer; color: var(--muted); font-weight: 500; font-size: 14px; }
+  .modes input { position: absolute; opacity: 0; pointer-events: none; }
+  .modes label:has(input:checked) { background: var(--raised); color: var(--text); }
+  .modes label:has(input:disabled) { cursor: default; opacity: .6; }
+  .bar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .state { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; min-width: 96px; }
+  .state::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
+  body.running .state::before { background: var(--live); box-shadow: 0 0 0 4px rgba(255, 90, 79, .18); }
+  #message { padding: 0 22px; color: var(--out); font-size: 14px; }
+  #message:not(:empty) { padding-top: 10px; }
+
+  /* stage */
+  .stage { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); gap: 20px;
+           padding: 18px 22px 22px; height: calc(100vh - 62px); min-height: 620px; }
+  .onair { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .monitor { position: relative; border-radius: 12px; overflow: hidden; background: #000; flex: none; }
+  canvas { display: block; width: 100%; aspect-ratio: 1; }
+  .meter { position: absolute; left: 12px; right: 12px; bottom: 10px; height: 4px; background: rgba(255, 255, 255, .18);
+           border-radius: 2px; overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: var(--back); transition: width .08s linear; }
+  .talk { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+  #chat-row { flex: 1; min-height: 120px; display: flex; }
+  #chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 2px; }
+  #chat-log:empty::before { content: "대화가 여기에 표시됩니다."; color: var(--faint); font-size: 14px; margin: auto; }
+  .msg { max-width: 88%; padding: 8px 13px; border-radius: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--mine); border-bottom-right-radius: 4px; }
+  .msg.assistant { align-self: flex-start; background: var(--raised); border-bottom-left-radius: 4px; }
+  .msg.assistant:empty::before { content: "…"; color: var(--muted); }
+  .msg.aside { align-self: flex-end; background: transparent; border: 1px dashed var(--line); color: var(--muted); font-size: 13px; padding: 3px 10px; }
+  .msg.interrupting { outline: 2px solid var(--live); }
+  .msg.tool { align-self: flex-start; background: transparent; color: var(--muted); font-size: 12.5px; padding: 0 4px;
+              border-left: 2px solid var(--back); border-radius: 0; }
+  .msg.tool.failed { color: var(--live); border-left-color: var(--live); }
+  .msg.cut::after { content: " (여기서 끊김)"; color: var(--muted); }
+  .composer { display: flex; gap: 8px; align-items: stretch; flex: none; }
+  .composer textarea { flex: 1; min-height: 46px; height: 46px; max-height: 140px; resize: vertical; }
+  .composer button { padding: 0 16px; }
+
+  /* backstage */
+  .backstage { display: flex; flex-direction: column; gap: 14px; min-height: 0; min-width: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .panel h2 { font-size: 15px; font-weight: 700; margin: 0 0 12px; }
+  .panel h2 small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 8px; }
+  .legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--muted); margin: -4px 0 12px; flex-wrap: wrap; }
+  .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .legend .l-out::before { background: var(--out); } .legend .l-back::before { background: var(--back); }
+  .legend .l-live::before { background: var(--live); }
+
+  .path { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
+  .node { position: relative; padding: 10px 12px 10px 0; }
+  .node::before { content: ""; position: absolute; left: 0; right: 0; top: 17px; height: 2px; background: var(--line); }
+  .node:last-child::before { right: 50%; }
+  .node .dot { position: relative; width: 16px; height: 16px; border-radius: 50%; background: var(--panel);
+               border: 2px solid var(--faint); transition: background .15s, border-color .15s, box-shadow .15s; }
+  .node .name { font-weight: 600; margin-top: 8px; font-size: 14px; }
+  .node .val { color: var(--muted); font-size: 12.5px; min-height: 1.5em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .node.active .dot { background: var(--out); border-color: var(--out); box-shadow: 0 0 0 5px rgba(255, 179, 65, .2); }
+  .node.done .dot { background: var(--back); border-color: var(--back); }
+  .node.live .dot { background: var(--live); border-color: var(--live); box-shadow: 0 0 0 5px rgba(255, 90, 79, .2); }
+  .node.off { opacity: .4; }
+
+  .sources { margin-top: 6px; border-left: 2px solid var(--line); margin-left: calc(40% + 7px); padding: 4px 0 2px 0; position: relative; }
+  .sources > p { margin: 0 0 2px 16px; color: var(--muted); font-size: 12.5px; }
+  .src { display: grid; grid-template-columns: 56px 170px minmax(0, 1fr); align-items: center; gap: 0 10px; padding: 3px 0; opacity: .5;
+         transition: opacity .2s; }
+  .src.asking, .src.answered, .src.failed { opacity: 1; }
+  .wire { position: relative; height: 2px; background: var(--line); }
+  .wire i { position: absolute; top: -4px; left: 0; width: 10px; height: 10px; border-radius: 50%; opacity: 0; }
+  .src.asking .wire { background: var(--out); }
+  .src.asking .wire i { background: var(--out); opacity: 1; animation: go-out .75s linear infinite; }
+  .src.answered .wire { background: var(--back); }
+  .src.answered .wire i { background: var(--back); animation: come-back .6s ease-out 1; }
+  .src.failed .wire { background: var(--live); }
+  @keyframes go-out { from { left: 0; } to { left: calc(100% - 10px); } }
+  @keyframes come-back { from { left: calc(100% - 10px); opacity: 1; } to { left: 0; opacity: 0; } }
+  .src .who { font-weight: 600; font-size: 14px; }
+  .src .who small { font-weight: 400; color: var(--muted); font-size: 11.5px; margin-left: 6px; white-space: nowrap; }
+  .src .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .src .io { font-size: 13px; min-width: 0; }
+  .src .io div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .src .ask { color: var(--out); } .src .ans { color: var(--back); }
+  .src.failed .ans { color: var(--live); }
+  .src .ask:empty::before { content: "대기"; color: var(--faint); }
+
+  .trace-panel { flex: 1; min-height: 160px; display: flex; flex-direction: column; }
+  #trace { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; font-size: 13.5px; }
+  #trace:empty::before { content: "질문을 하면 인식, 검색, 생성, 합성이 일어난 순서가 시간과 함께 기록됩니다."; color: var(--faint); }
+  #trace li { display: grid; grid-template-columns: 62px 14px minmax(0, 1fr); gap: 0 8px; padding: 3px 0; align-items: baseline; }
+  #trace time { color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
+  #trace .mark { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); align-self: center; }
+  #trace .out .mark { background: var(--out); } #trace .back .mark { background: var(--back); }
+  #trace .live .mark { background: var(--live); } #trace .bad .mark { background: var(--live); }
+  #trace .bad .what { color: var(--live); }
+  #trace li.turn { grid-template-columns: 1fr; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-weight: 600; }
+  #trace li.turn:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+  #trace details { margin-top: 2px; }
+  #trace summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+  #trace pre { margin: 4px 0 6px; white-space: pre-wrap; color: var(--muted); font: inherit; font-size: 12.5px;
+               border-left: 2px solid var(--line); padding-left: 10px; }
+
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 0; font-size: 13px; flex: none; }
+  .stats div { min-width: 0; }
+  .stats dt { color: var(--muted); font-size: 12px; }
+  .stats dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  #metrics { margin-top: 8px; font-size: 13px; font-variant-numeric: tabular-nums; max-height: 150px; overflow-y: auto; }
+  #metrics div { padding: 2px 0; border-top: 1px solid var(--line); }
+  #metrics .bad { color: var(--live); }
+
+  /* settings drawer */
+  .scrim { position: fixed; inset: 0; background: rgba(4, 8, 16, .55); z-index: 9; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(430px, 100vw); background: var(--panel);
+            border-left: 1px solid var(--line); z-index: 10; overflow-y: auto; padding: 18px 20px 28px; }
+  .drawer header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .drawer h2 { font-size: 17px; margin: 0; }
+  .drawer h3 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 20px 0 8px; }
+  .drawer .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 5px 0; }
+  .drawer select { max-width: 100%; }
+
+  @media (max-width: 980px) {
+    .stage { grid-template-columns: 1fr; height: auto; }
+    .onair { max-width: 520px; width: 100%; margin: 0 auto; }
+    #chat-row { min-height: 200px; max-height: 320px; }
+    .trace-panel { min-height: 240px; max-height: 420px; }
+    .sources { margin-left: 8px; }
+    .src { grid-template-columns: 30px 84px minmax(0, 1fr); }
+    .src .who small { display: none; }
+    .bar-right { margin-left: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .src.asking .wire i, .src.answered .wire i { animation: none; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">실시간 대화 아바타</div>
+  <div class="modes" role="radiogroup" aria-label="입력 방식">
+    <label><input type="radio" name="source" value="voice" checked> 음성 대화</label>
+    <label><input type="radio" name="source" value="chat"> 글 대화</label>
+    <label><input type="radio" name="source" value="auto"> 자율 대화</label>
+    <label><input type="radio" name="source" value="tts"> 텍스트 읽기</label>
+    <label><input type="radio" name="source" value="mic"> 마이크 따라 말하기</label>
+  </div>
+  <div class="bar-right">
+    <span class="state" id="s-state">대기</span>
+    <button id="toggle">시작</button>
+    <button id="open-settings" class="ghost" aria-haspopup="dialog">설정</button>
+  </div>
+</header>
+<div id="message" role="status"></div>
+
+<main class="stage">
+  <section class="onair" aria-label="아바타와 대화">
+    <div class="monitor">
+      <canvas id="canvas" width="512" height="512"></canvas>
+      <div class="meter" id="meter" title="마이크 입력 레벨"><div id="level"></div></div>
+    </div>
+    <div class="talk" id="tts-card" hidden>
+      <div id="chat-row" hidden><div id="chat-log" aria-live="polite"></div></div>
+      <div class="composer">
+        <textarea id="text" aria-label="보낼 내용"></textarea>
+        <button id="speak" disabled>말하기</button>
+        <button id="clear" class="ghost" disabled>중단</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="backstage" aria-label="무대 뒤">
+    <div class="panel">
+      <h2>무대 뒤에서 일어나는 일 <small id="flow-caption">시작을 누르면 단계마다 불이 들어옵니다</small></h2>
+      <div class="legend"><span class="l-out">요청이 나가는 중</span><span class="l-back">결과가 돌아옴</span><span class="l-live">화면으로 송출 중</span></div>
+      <ol class="path">
+        <li class="node" id="n-listen"><div class="dot"></div><div class="name">듣기</div><div class="val"></div></li>
+        <li class="node" id="n-stt"><div class="dot"></div><div class="name">음성 인식</div><div class="val"></div></li>
+        <li class="node" id="n-llm"><div class="dot"></div><div class="name">답변 생성</div><div class="val"></div></li>
+        <li class="node" id="n-tts"><div class="dot"></div><div class="name">음성 합성</div><div class="val"></div></li>
+        <li class="node" id="n-video"><div class="dot"></div><div class="name">영상 생성</div><div class="val"></div></li>
+      </ol>
+      <div class="sources">
+        <p>답변 생성이 찾아보는 곳</p>
+        <div class="src" id="src-knowledge"><div class="wire"><i></i></div><div class="who">지식베이스<small id="src-knowledge-name">WeKnora</small></div><div class="io"><div class="ask"></div><div class="ans"></div></div></div>
+        <div class="src" id="src-weather"><div class="wire"><i></i></div><div class="who">날씨<small>Open-Meteo · MET Norway</small></div><div class="io"><div class="ask"></div><div class="ans"></div></div></div>
+        <div class="src" id="src-news"><div class="wire"><i></i></div><div class="who">뉴스<small>Google · Bing</small></div><div class="io"><div class="ask"></div><div class="ans"></div></div></div>
+        <div class="src" id="src-geeknews"><div class="wire"><i></i></div><div class="who">긱뉴스<small>news.hada.io</small></div><div class="io"><div class="ask"></div><div class="ans"></div></div></div>
+        <div class="src" id="src-wiki"><div class="wire"><i></i></div><div class="who">위키백과<small>ko · en</small></div><div class="io"><div class="ask"></div><div class="ans"></div></div></div>
+      </div>
+    </div>
+
+    <div class="panel trace-panel">
+      <h2>이번 대화의 기록 <small>질문 시점부터 흐른 시간</small></h2>
+      <ol id="trace"></ol>
+    </div>
+
+    <div class="panel" id="metrics-card" hidden>
+      <h2>자연스러움 측정 <small id="metrics-summary"></small></h2>
+      <div id="metrics"></div>
+    </div>
+
+    <dl class="stats">
+      <div><dt id="s-delay-label">지연</dt><dd id="s-delay">-</dd></div>
+      <div><dt>영상 한 청크 생성 시간</dt><dd id="s-infer">-</dd></div>
+      <div><dt>건너뛴 음성</dt><dd id="s-drop">-</dd></div>
+    </dl>
+  </section>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="settings" role="dialog" aria-label="설정" hidden>
+  <header><h2>설정</h2><button id="close-settings" class="ghost">닫기</button></header>
+
+  <div id="voice-group">
+    <h3>말하기</h3>
+    <div class="row">
+      <label>음성 <select id="voice"></select></label>
+      <label id="model-label" hidden>모델 <select id="model"></select></label>
+    </div>
+    <div class="row">
+      <label title="듣기(음성 인식), 답변, 말하기(음성 합성)에 쓸 언어입니다. 자동은 매번 사용자가 쓴 언어(한국어 또는 영어)를 따릅니다.">대화 언어
+        <select id="language">
+          <option value="ko" selected>한국어</option>
+          <option value="en">English</option>
+          <option value="auto">자동 (한국어/영어)</option>
+        </select>
+      </label>
+      <label id="length-label" hidden title="아바타가 한 번에 말하는 길이입니다. 대화 중에 '자세히 설명해줘'나 '짧게 말해줘'라고 하면 그 답변만 길이가 바뀝니다. '설명'으로 바꾼 뒤 첫 답변은 모델을 다시 올리느라 10초쯤 늦을 수 있습니다.">답변 길이
+        <select id="length">
+          <option value="short" selected>짧게 (한두 문장)</option>
+          <option value="normal">보통 (서너 문장)</option>
+          <option value="long">길게 (예닐곱 문장)</option>
+          <option value="explain">설명 (열 문장 이상)</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div id="lookup-group">
+    <h3>찾아보기</h3>
+    <div class="row" id="tools-row" hidden>
+      <label><input type="checkbox" id="tools" checked> 실시간 정보 (시각, 날씨, 뉴스, 긱뉴스, 위키백과)</label>
+    </div>
+    <div class="row" id="knowledge-row" hidden>
+      <label><input type="checkbox" id="knowledge"> 지식 검색 (<span id="knowledge-name">지식베이스</span>)</label>
+      <label title="검색 결과의 관련도 점수가 이 값 이상일 때만 답변에 씁니다. 낮추면 더 자주 쓰고, 높이면 확실할 때만 씁니다.">기준
+        <input type="number" id="knowledge-threshold" value="0.4" min="0" max="1" step="0.05" style="width:4.8em">
+      </label>
+    </div>
+  </div>
+
+  <div id="listen-group">
+    <h3>듣기와 끼어들기</h3>
+    <div class="row" id="monitor-row">
+      <label><input type="checkbox" id="monitor"> 내 음성을 영상과 함께 재생 (헤드폰 필요)</label>
+    </div>
+    <div class="row" id="barge-row" hidden>
+      <label><input type="checkbox" id="barge"> 아바타가 말하는 중에도 듣기 (헤드폰 필요)</label>
+    </div>
+    <div class="row" id="stt-row" hidden>
+      <label title="말을 글자로 바꾸는 모델입니다. 대화 중에 바꾸면 다음 발화부터 적용됩니다.">음성 인식 모델
+        <select id="stt">
+          <option value="whisper" selected>Whisper large-v3-turbo</option>
+          <option value="qwen">Qwen3-ASR-1.7B</option>
+        </select>
+      </label>
+    </div>
+    <div class="row" id="endpoint-row" hidden>
+      <label title="말이 끝났는지를 정하는 방법입니다. Smart Turn은 억양과 말투로 끝났는지를 추정해, 끝난 것 같으면 0.35초, 덜 끝난 것 같으면 2초까지 기다립니다.">말 끝 판단
+        <select id="endpoint">
+          <option value="silence" selected>고정 (0.7초 조용하면 끝)</option>
+          <option value="smart">Smart Turn (억양으로 판단, 0.35~2초)</option>
+        </select>
+      </label>
+      <span id="endpoint-last" style="font-size:12.5px;color:var(--muted)"></span>
+    </div>
+    <div class="row" id="speculative-row" hidden>
+      <label><input type="checkbox" id="speculative"> 선제 응답 (말이 끝났다고 판단하기 전에 답을 미리 준비)</label>
+    </div>
+    <div class="row" id="interrupt-row" hidden>
+      <label>끼어들기 처리
+        <select id="interrupt-mode">
+          <option value="basic">기본 (보낸 음성은 끝까지 재생)</option>
+          <option value="unmute">즉시 끊고, 들은 만큼만 기억</option>
+          <option value="unmute_gate">즉시 끊되, 짧은 맞장구에는 끊지 않음</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div id="auto-row" hidden>
+    <h3>자율 대화의 상대역</h3>
+    <div class="row">
+      <label>음성 <select id="guest-voice"></select></label>
+      <label>반응 성향
+        <select id="guest-level">
+          <option value="low">조용히 듣기</option>
+          <option value="medium" selected>보통</option>
+          <option value="high">자주 끼어들기</option>
+        </select>
+      </label>
+      <label>턴 수 <select id="max-turns"><option>4</option><option selected>6</option><option>10</option><option>20</option></select></label>
+    </div>
+    <div class="row"><label><input type="checkbox" id="ask-live"> 시각, 날씨, 뉴스를 묻게 하기</label></div>
+  </div>
+
+  <h3>아바타 얼굴</h3>
+  <div class="row"><label>기준 이미지 <input type="file" id="image" accept="image/*"></label></div>
+  <div class="row"><label><input type="checkbox" id="crop" checked> 얼굴 자동 크롭</label></div>
+</aside>
+
+<script>
+const SR = 16000;
+const PACKET = 1600; // 100 ms
+const $ = id => document.getElementById(id);
+const canvas = $('canvas'), g = canvas.getContext('2d');
+
+const workletSource = `
+class Capture extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Int16Array(${PACKET}); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (ch) {
+      for (let i = 0; i < ch.length; i++) {
+        const s = Math.max(-1, Math.min(1, ch[i]));
+        this.buf[this.n++] = s < 0 ? s * 32768 : s * 32767;
+        if (this.n === this.buf.length) {
+          const out = this.buf.slice();
+          this.port.postMessage(out.buffer, [out.buffer]);
+          this.n = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('capture', Capture);`;
+
+let ctx = null, ws = null, mic = null, monitorGain = null;
+let cfg = null, running = false;
+let captureStart = null;   // ctx time at which sample 0 was captured
+let playHead = 0;          // ctx time at which the next chunk should start
+let frames = [];           // {t, bitmap}, sorted by t
+let chain = Promise.resolve();
+let scheduled = [];        // audio chunks handed to WebAudio: {seq, node, t0, duration}
+let outputGain = null;     // gain shared by the chunks scheduled since the last flush
+let minSeq = 0;            // chunks below this were made obsolete by an interrupt
+let source = 'mic';
+let speakTimes = {};       // request id -> ctx time at which the text was sent
+let speechStarts = {};     // chunk seq -> "speech" notices waiting for that chunk
+let toolLines = {};        // request id + tool call -> the chat line that shows the lookup
+let nextRequestId = 1;
+
+const TTS_SAMPLE = '안녕하세요. 지금 입력한 문장을 실시간으로 말하고 있습니다.';
+let chatBubbles = {};      // request id -> assistant bubble element
+// ---- backstage view: which stage is working, what was asked of whom, and what came back --------
+const SOURCE_OF = { get_weather: 'weather', search_news: 'news', get_news_detail: 'news',
+  search_geeknews: 'geeknews', read_geeknews: 'geeknews', search_wikipedia: 'wiki', list_knowledge_by_date: 'knowledge' };
+const SOURCE_LABEL = { knowledge: '지식베이스', weather: '날씨', news: '뉴스', geeknews: '긱뉴스', wiki: '위키백과' };
+const sec = ms => (ms / 1000).toFixed(2) + '초';
+
+const Flow = {
+  t0: null,          // performance.now() at which the current question was complete
+  pendingEnd: null,  // an end-of-turn judgement that arrived before its transcript
+
+  node(id, state, value) {
+    const el = $('n-' + id);
+    el.classList.remove('active', 'done', 'live');
+    if (state) el.classList.add(state);
+    if (value !== undefined) el.querySelector('.val').textContent = value;
+  },
+
+  source(key, state, ask, answer, title) {
+    const el = $('src-' + key);
+    el.classList.remove('asking', 'answered', 'failed');
+    if (state) { void el.offsetWidth; el.classList.add(state); }  // restart the animation
+    if (ask !== undefined) el.querySelector('.ask').textContent = ask;
+    if (answer !== undefined) el.querySelector('.ans').textContent = answer;
+    el.title = title || '';
+  },
+
+  log(kind, text, detail) {
+    const li = document.createElement('li');
+    li.className = kind;
+    const t = document.createElement('time');
+    t.textContent = this.t0 === null ? '' : '+' + ((performance.now() - this.t0) / 1000).toFixed(2) + '초';
+    const mark = document.createElement('span');
+    mark.className = 'mark';
+    const what = document.createElement('div');
+    what.className = 'what';
+    what.textContent = text;
+    if (detail) {
+      const box = document.createElement('details'), summary = document.createElement('summary'), pre = document.createElement('pre');
+      summary.textContent = '돌아온 내용 보기';
+      pre.textContent = detail;
+      box.append(summary, pre);
+      what.append(box);
+    }
+    li.append(t, mark, what);
+    this.append(li);
+  },
+
+  append(li) {
+    const list = $('trace'), atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    list.append(li);
+    while (list.children.length > 160) list.firstChild.remove();
+    if (atEnd) list.scrollTop = list.scrollHeight;
+  },
+
+  // A new question: clear what the last one lit up.
+  turn(text, agoMs) {
+    this.t0 = performance.now() - (agoMs || 0);
+    ['knowledge', 'weather', 'news', 'geeknews', 'wiki'].forEach(key => this.source(key, null, '', ''));
+    ['llm', 'tts'].forEach(id => this.node(id, null, ''));
+    const li = document.createElement('li');
+    li.className = 'turn';
+    li.textContent = '질문: ' + text;
+    this.append(li);
+    $('flow-caption').textContent = '';
+  },
+
+  reset() {
+    this.t0 = null; this.pendingEnd = null;
+    ['listen', 'stt', 'llm', 'tts', 'video'].forEach(id => this.node(id, null, ''));
+    ['knowledge', 'weather', 'news', 'geeknews', 'wiki'].forEach(key => this.source(key, null, '', ''));
+    $('flow-caption').textContent = '시작을 누르면 단계마다 불이 들어옵니다';
+  },
+
+  listening(state) {
+    this.node('listen', state === 'hearing' ? 'active' : null,
+      { listening: '기다리는 중', hearing: '말소리 감지', transcribing: '말이 끝남', speaking: '아바타가 말하는 중' }[state] || '');
+    if (state === 'transcribing') this.node('stt', 'active', '글자로 바꾸는 중');
+  },
+
+  transcript(m) {
+    this.turn(m.text, m.stt_ms);
+    this.node('stt', 'done', m.stt_ms != null ? sec(m.stt_ms) : '');
+    if (this.pendingEnd) {
+      this.log('step', '말 끝 판단: 끝났을 확률 ' + this.pendingEnd.probability.toFixed(2) + ', '
+        + this.pendingEnd.silence.toFixed(2) + '초 기다린 뒤 확정');
+      this.pendingEnd = null;
+    }
+    this.log('back', '음성 인식 ' + (m.engine === 'qwen' ? '(Qwen3-ASR) ' : m.engine === 'whisper' ? '(Whisper) ' : '')
+      + (m.stt_ms != null ? sec(m.stt_ms) : '')
+      + (m.language ? ' (' + (m.language === 'en' ? '영어' : '한국어') + ')' : '')
+      + (m.speculative ? ', 미리 준비해 둔 답을 사용' : ''));
+  },
+
+  knowledge(m) {
+    if (m.state === 'start') {
+      this.source('knowledge', 'asking', '→ ' + m.query, '');
+      this.log('out', '지식베이스에 검색 요청: ' + m.query);
+    } else if (m.state === 'reused') {
+      this.source('knowledge', m.has ? 'answered' : null, '→ 앞 질문에 이어지는 말', m.has ? '← 직전에 찾은 자료를 이어 씀' : '← 이어 쓸 자료 없음');
+      this.log('step', m.has ? '앞 대화를 가리키는 말이라 직전에 찾은 자료를 이어 씀' : '앞 대화를 가리키는 말이라 새로 검색하지 않음');
+    } else if (!m.ok) {
+      this.source('knowledge', 'failed', undefined, '← 실패: ' + (m.message || ''));
+      this.log('bad', '지식 검색 실패 (' + (m.message || '') + '), 자료 없이 답변');
+    } else {
+      const used = m.sources.length;
+      this.source('knowledge', 'answered', undefined,
+        used ? '← 문서 ' + used + '건 사용 · 최고 ' + m.top.toFixed(2) + ' · ' + sec(m.ms)
+             : '← 쓸 만한 자료 없음 · 최고 ' + m.top.toFixed(2) + ' · ' + sec(m.ms), m.sources.join('\n'));
+      this.log('back', used ? '지식베이스 응답 ' + sec(m.ms) + ': 관련도 ' + m.top.toFixed(2) + ', 문서 ' + used + '건을 프롬프트에 첨부'
+        : '지식베이스 응답 ' + sec(m.ms) + ': 최고 관련도 ' + m.top.toFixed(2) + '가 기준 ' + m.threshold.toFixed(2) + '에 못 미쳐 쓰지 않음',
+        used ? m.sources.join('\n') : null);
+    }
+  },
+
+  llm(m) {
+    if (m.state === 'start') {
+      this.node('llm', 'active', m.model + (m.round > 1 ? ' · ' + m.round + '번째' : ''));
+      this.log('out', m.round > 1 ? '찾아온 결과를 넣어 답변을 다시 생성 (' + m.round + '번째)'
+        : '답변 생성 시작: ' + m.model + (m.tools ? ', 쓸 수 있는 도구 ' + m.tools + '개' : ''));
+    } else if (m.state === 'first_token') {
+      this.node('llm', 'active', '첫 글자 ' + sec(m.ms));
+    } else if (m.state === 'done') {
+      this.node('llm', 'done', m.chars + '자 · ' + sec(m.ms));
+      this.log('back', '답변 생성 끝: ' + m.chars + '자, ' + sec(m.ms));
+    }
+  },
+
+  tool(m) {
+    const key = SOURCE_OF[m.name] || 'news', label = SOURCE_LABEL[key];
+    const what = describeTool(m).replace(/^[^:]+: /, '');  // the lane already says which source
+    // "기사 5건" says more than the heading line the result starts with
+    const items = m.items || 0;
+    const brief = text => (items ? '항목 ' + items + '건: ' : '') + text.replace(/:$/, '');
+    if (m.state === 'start') {
+      this.source(key, 'asking', '→ ' + what, '');
+      this.log('out', label + '에 요청: ' + what);
+    } else if (m.state === 'cancelled') {
+      this.source(key, 'failed', undefined, '← 취소됨');
+      this.log('bad', label + ' 조회가 취소됨 (말이 끊김)');
+    } else {
+      const first = (m.result || '').split('\n')[0];
+      this.source(key, m.ok ? 'answered' : 'failed', '→ ' + what, '← ' + brief(first) + ' · ' + sec(m.ms), m.result);
+      this.log(m.ok ? 'back' : 'bad', label + (m.ok ? ' 응답 ' : ' 실패 ') + sec(m.ms) + ': ' + brief(first), m.ok ? m.result : null);
+    }
+  },
+
+  tts(m) {
+    if (m.state === 'start') {
+      this.node('tts', 'active', (m.filler ? '추임새 ' : '') + m.chars + '자 합성 중');
+    } else {
+      this.node('tts', 'done', m.seconds.toFixed(1) + '초 분량 · ' + sec(m.ms));
+      this.log('step', (m.filler ? '추임새 준비: ' : '음성 합성: ') + m.seconds.toFixed(1) + '초 분량을 ' + sec(m.ms) + '에');
+    }
+  },
+
+  chunk(inferMs, duration) {
+    $('n-video').querySelector('.val').textContent = duration.toFixed(2) + '초 분량을 ' + Math.round(inferMs) + 'ms에';
+  },
+
+  onAir(mark, delay) {
+    this.node('video', 'live');
+    clearTimeout(this.liveTimer);
+    this.liveTimer = setTimeout(() => this.node('video', null), 2500);
+    const kind = mark.phase === 'filler' ? '추임새가 화면에 나감' : mark.phase === 'answer' ? '찾아본 답이 화면에 나감' : '답변이 화면에 나감';
+    this.log('live', kind + (delay != null ? ': 질문이 끝나고 ' + delay.toFixed(2) + '초' : ''));
+  },
+};
+
+
+function applySource() {
+  source = document.querySelector('input[name=source]:checked').value;
+  const voice = source === 'voice', auto = source === 'auto';
+  const text = source !== 'mic', chat = source === 'chat' || voice || auto;
+  $('auto-row').hidden = !auto;
+  $('speculative-row').hidden = !(voice || auto);
+  $('endpoint-row').hidden = !(voice || auto);
+  $('stt-row').hidden = !(voice || auto);
+  $('tools-row').hidden = !chat;
+  $('knowledge-row').hidden = !(chat && knowledgeAvailable);
+  $('metrics-card').hidden = !auto;
+  $('tts-card').hidden = !text;
+  $('voice-group').hidden = !text;
+  $('lookup-group').hidden = !chat;
+  ['listen', 'stt'].forEach(id => $('n-' + id).classList.toggle('off', !(voice || auto || source === 'mic')));
+  ['llm'].forEach(id => $('n-' + id).classList.toggle('off', !chat));
+  $('n-tts').classList.toggle('off', !text);
+  document.querySelector('.sources').hidden = !chat;
+  $('monitor-row').hidden = text;
+  $('barge-row').hidden = !voice;
+  $('interrupt-row').hidden = !text;
+  $('meter').hidden = text && !voice;
+  $('chat-row').hidden = !chat;
+  $('model-label').hidden = !chat;
+  $('length-label').hidden = !chat;
+  $('speak').textContent = auto ? '대화 시작' : chat ? '보내기' : '읽기';
+  $('text').placeholder = auto ? '두 AI가 나눌 대화 주제를 입력하세요.'
+    : (voice ? '말로 하거나, 여기에 입력해도 됩니다.'
+      : chat ? '아바타에게 할 말을 입력하세요.' : '말할 내용을 입력하세요.')
+      ;
+  $('text').title = 'Enter로 전송, Shift+Enter로 줄바꿈';
+  $('text').value = auto ? '주말에 서울에서 가볼 만한 곳' : chat ? '' : TTS_SAMPLE;
+  $('s-delay-label').textContent = (voice || auto) ? '말이 끝난 뒤 답변이 시작되기까지'
+    : text ? '보낸 뒤 말하기 시작까지' : '말한 시점에서 화면까지';
+  if (text) loadVoices();
+  if (chat) loadModels();
+}
+
+const TOOL_NAMES = { get_weather: '날씨', search_news: '뉴스' };
+
+function describeTool(m) {
+  const a = m.arguments || {};
+  if (m.name === 'get_weather') {
+    const day = { 0: '오늘', 1: '내일', 2: '모레' }[a.day_offset] || (a.day_offset + '일 뒤');
+    return '날씨 조회: ' + (a.location || '기본 지역') + ', ' + day;
+  }
+  if (m.name === 'search_news') return '뉴스 검색: ' + (a.query || '주요 뉴스');
+  if (m.name === 'search_wikipedia') return '위키백과 검색: ' + (a.query || '');
+  if (m.name === 'get_news_detail') return '뉴스 상세: ' + (a.topic || '');
+  if (m.name === 'search_geeknews') return '긱뉴스 검색: ' + (a.query || '최신 글');
+  if (m.name === 'read_geeknews') return '긱뉴스 글 읽기: ' + (a.title || '');
+  if (m.name === 'list_knowledge_by_date') return '지식 목록: ' + (a.date ? a.date + '에 추가된 자료' : '최근 추가된 자료');
+  return '조회: ' + m.name;
+}
+
+function onTool(m) {
+  const key = m.id + '|' + m.name + '|' + JSON.stringify(m.arguments);
+  let line = toolLines[key];
+  if (!line) {
+    line = toolLines[key] = document.createElement('div');
+    line.className = 'msg tool';
+    // the lookup belongs above the reply it leads to
+    const bubble = chatBubbles[m.id];
+    if (bubble && bubble.parentNode) $('chat-log').insertBefore(line, bubble);
+    else $('chat-log').appendChild(line);
+  }
+  if (m.state === 'start') {
+    line.textContent = describeTool(m) + ' …';
+  } else if (m.state === 'cancelled') {
+    line.textContent = describeTool(m) + ' (취소됨)';
+  } else {
+    line.textContent = describeTool(m) + (m.ok ? ' (' : ' 실패 (') + (m.ms / 1000).toFixed(2) + '초)';
+    line.title = m.result || '';
+    line.classList.toggle('failed', !m.ok);
+    if (source === 'auto') onMetric({ name: 'tool', tool: m.name, ok: m.ok, ms: m.ms });
+  }
+  $('chat-log').scrollTop = $('chat-log').scrollHeight;
+}
+
+let knowledgeAvailable = false;  // the server has a WeKnora key and knowledge base
+
+// One line above the reply: which documents the answer was given to work from.
+function onKnowledge(m) {
+  const line = document.createElement('div');
+  line.className = 'msg tool';
+  if (!m.ok) {
+    line.textContent = '지식 검색 실패: ' + (m.message || '') + ' (자료 없이 답변)';
+    line.classList.add('failed');
+  } else {
+    const timing = ' (' + (m.ms / 1000).toFixed(2) + '초, 최고 점수 ' + m.top.toFixed(2) + ')';
+    line.textContent = m.sources.length
+      ? '지식 검색: ' + m.sources.map(t => t.length > 40 ? t.slice(0, 40) + '…' : t).join(' / ') + timing
+      : '지식 검색: 기준 ' + m.threshold.toFixed(2) + ' 이상인 자료 없음' + timing;
+    line.title = m.sources.join('\n');
+  }
+  const bubble = chatBubbles[m.id];
+  if (bubble && bubble.parentNode) $('chat-log').insertBefore(line, bubble);
+  else $('chat-log').appendChild(line);
+  $('chat-log').scrollTop = $('chat-log').scrollHeight;
+}
+
+async function loadModels() {
+  if ($('model').options.length) return;
+  try {
+    const info = await (await fetch('/api/llm')).json();
+    if (!info.available) { setMessage(info.message); return; }
+    info.models.forEach(name => $('model').add(new Option(name, name, false, name === info.default_model)));
+    if (!info.smart_turn) $('endpoint').options[1].disabled = true;
+    if (!(info.stt_engines && info.stt_engines.qwen)) {
+      $('stt').options[1].disabled = true;
+      $('stt').options[1].textContent += ' (서버가 꺼져 있음)';
+    }
+    if (info.knowledge && info.knowledge.available) {
+      knowledgeAvailable = true;
+      $('knowledge-name').textContent = info.knowledge.name;
+      $('src-knowledge-name').textContent = info.knowledge.name;
+      $('knowledge-row').hidden = source === 'mic' || source === 'tts';
+    } else {
+      $('src-knowledge').hidden = true;
+    }
+  } catch (err) {
+    setMessage('LLM 정보를 가져오지 못했습니다: ' + err.message);
+  }
+}
+
+const LISTEN_STATES = { listening: '듣는 중', hearing: '음성 감지', transcribing: '인식 중', speaking: '답변 중' };
+
+function sendConfig() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !cfg || source === 'mic') return;
+  ws.send(JSON.stringify({
+    type: 'config',
+    voice: $('voice').value || null,
+    model: $('model').value || null,
+    barge_in: $('barge').checked,
+    interrupt_mode: $('interrupt-mode').value,
+    speculative: $('speculative').checked,
+    tools: $('tools').checked,
+    language: $('language').value,
+    length: $('length').value,
+    endpoint: $('endpoint').value,
+    stt: $('stt').value,
+    knowledge: $('knowledge').checked,
+    knowledge_threshold: parseFloat($('knowledge-threshold').value) || 0,
+  }));
+}
+
+function addBubble(role, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + role;
+  el.textContent = text;
+  $('chat-log').appendChild(el);
+  $('chat-log').scrollTop = $('chat-log').scrollHeight;
+  return el;
+}
+
+async function loadVoices() {
+  if ($('voice').options.length) return;
+  try {
+    const info = await (await fetch('/api/tts')).json();
+    if (!info.available) { setMessage(info.message); return; }
+    info.voices.forEach(name => $('voice').add(new Option(name, name, false, name === info.default_voice)));
+    info.voices.forEach(name => $('guest-voice').add(new Option(name, name, false, name === 'M1')));
+  } catch (err) {
+    setMessage('TTS 정보를 가져오지 못했습니다: ' + err.message);
+  }
+}
+
+function speak() {
+  const text = $('text').value.trim();
+  if (!running || !cfg || !text) return;
+  const id = nextRequestId++;
+  speakTimes[id] = ctx.currentTime;
+  const voice = $('voice').value || undefined;
+  if (source === 'auto') {
+    setMessage('');
+    $('chat-log').innerHTML = '';
+    $('trace').innerHTML = '';
+    resetMetrics();
+    sendConfig();
+    ws.send(JSON.stringify({
+      type: 'auto_start', topic: text, guest_voice: $('guest-voice').value || undefined,
+      level: $('guest-level').value, max_turns: Number($('max-turns').value),
+      ask_live: $('ask-live').checked,
+    }));
+    return;
+  }
+  if (source === 'chat' || source === 'voice') {
+    setMessage('');
+    addBubble('user', text);
+    chatBubbles[id] = addBubble('assistant', '');
+    $('text').value = '';
+    Flow.turn(text);
+    ws.send(JSON.stringify({ type: 'chat', id, text, voice, model: $('model').value || undefined }));
+  } else {
+    ws.send(JSON.stringify({ type: 'speak', id, text, voice }));
+    Flow.turn(text);
+  }
+}
+
+function setMessage(text) { $('message').textContent = text || ''; }
+
+async function showReference() {
+  const img = new Image();
+  img.onload = () => { if (!running) g.drawImage(img, 0, 0, canvas.width, canvas.height); };
+  img.src = '/api/image/current?t=' + Date.now();
+}
+
+async function start() {
+  setMessage('');
+  const useMic = source === 'mic' || source === 'voice';
+  if (useMic && (!navigator.mediaDevices || !window.AudioWorkletNode)) {
+    setMessage('이 주소에서는 마이크를 쓸 수 없습니다. http://localhost 또는 HTTPS로 접속하세요.');
+    return;
+  }
+  $('toggle').disabled = true;
+  document.querySelectorAll('input[name=source]').forEach(el => { el.disabled = true; });
+  try {
+    let capture = null;
+    if (useMic) {
+      mic = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    }
+    ctx = new AudioContext({ sampleRate: SR });
+    if (useMic) {
+      await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSource], { type: 'application/javascript' })));
+      capture = new AudioWorkletNode(ctx, 'capture');
+      const silent = ctx.createGain();
+      silent.gain.value = 0;
+      ctx.createMediaStreamSource(mic).connect(capture).connect(silent).connect(ctx.destination);
+    }
+    monitorGain = ctx.createGain();
+    monitorGain.gain.value = source !== 'mic' || $('monitor').checked ? 1 : 0;
+    monitorGain.connect(ctx.destination);
+    outputGain = ctx.createGain();
+    outputGain.connect(monitorGain);
+
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?source=' + source);
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = e => { chain = chain.then(() => onMessage(e.data)).catch(err => console.error(err)); };
+    ws.onclose = () => { if (running) stop('연결이 끊어졌습니다.'); };
+
+    if (capture) capture.port.onmessage = e => {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !cfg) return;
+      if (captureStart === null && source === 'mic') captureStart = ctx.currentTime - PACKET / SR;
+      ws.send(e.data);
+      const pcm = new Int16Array(e.data);
+      let sum = 0;
+      for (let i = 0; i < pcm.length; i++) sum += pcm[i] * pcm[i];
+      const db = 20 * Math.log10(Math.sqrt(sum / pcm.length) / 32768 + 1e-6);
+      $('level').style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
+    };
+
+    running = true;
+    document.body.classList.add('running');
+    $('toggle').textContent = '정지';
+    $('toggle').classList.add('on');
+    $('s-state').textContent = '연결 중';
+  } catch (err) {
+    stop(err.name === 'NotAllowedError' ? '마이크 권한이 거부되었습니다.' : '시작 실패: ' + err.message);
+  } finally {
+    $('toggle').disabled = false;
+  }
+}
+
+function stop(message) {
+  running = false;
+  document.body.classList.remove('running');
+  Flow.reset();
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  if (mic) { mic.getTracks().forEach(t => t.stop()); mic = null; }
+  if (ctx) { ctx.close(); ctx = null; }
+  frames.forEach(f => f.bitmap.close());
+  frames = [];
+  cfg = null; captureStart = null; playHead = 0; chain = Promise.resolve();
+  scheduled = []; outputGain = null; minSeq = 0;
+  speakTimes = {}; speechStarts = {}; chatBubbles = {}; toolLines = {};
+  $('speak').disabled = true; $('clear').disabled = true;
+  document.querySelectorAll('input[name=source]').forEach(el => { el.disabled = false; });
+  $('toggle').textContent = '시작';
+  $('toggle').classList.remove('on');
+  $('level').style.width = '0';
+  $('s-state').textContent = '대기';
+  ['s-delay', 's-infer', 's-drop'].forEach(id => { $(id).textContent = '-'; });
+  setMessage(message);
+  showReference();
+}
+
+async function onMessage(data) {
+  if (!running) return;
+  if (typeof data === 'string') {
+    const m = JSON.parse(data);
+    if (m.type === 'ready') {
+      cfg = m;
+      canvas.width = m.width; canvas.height = m.height;
+      $('s-state').textContent = '실행 중 (' + m.model_type + ')';
+      if (m.source !== 'mic') { $('speak').disabled = false; $('clear').disabled = false; sendConfig(); }
+    } else if (m.type === 'listen_state') {
+      $('s-state').textContent = LISTEN_STATES[m.state] || m.state;
+      Flow.listening(m.state);
+    } else if (m.type === 'transcript') {
+      setMessage('');
+      // in auto mode the simulated user's words were already shown when it spoke
+      if (source !== 'auto') addBubble('user', m.text);
+      chatBubbles[m.id] = addBubble('assistant', '');
+      Flow.transcript(m);
+    } else if (m.type === 'guest') {
+      const bubble = addBubble(m.kind === 'backchannel' ? 'aside' : 'user', m.text);
+      if (m.kind === 'interrupt') bubble.classList.add('interrupting');
+    } else if (m.type === 'metric' && m.name === 'turn_end') {
+      $('endpoint-last').textContent = '직전 발화: 끝남 확률 ' + m.probability.toFixed(2) + ', '
+        + m.silence.toFixed(2) + '초 기다림';
+      Flow.pendingEnd = m;
+    } else if (m.type === 'metric') {
+      onMetric(m);
+    } else if (m.type === 'auto_done') {
+      setMessage('자율 대화가 끝났습니다.');
+    } else if (m.type === 'chat_delta') {
+      const bubble = chatBubbles[m.id];
+      if (bubble) {
+        bubble.textContent += m.text;
+        $('chat-log').scrollTop = $('chat-log').scrollHeight;
+      }
+    } else if (m.type === 'chat_replace') {
+      // the server withdrew text it had streamed but not spoken
+      if (chatBubbles[m.id]) chatBubbles[m.id].textContent = m.text;
+    } else if (m.type === 'interrupt') {
+      flushPlayback(m.seq);
+      Flow.log('bad', '끼어들기: 재생을 멈추고 어디까지 들렸는지 서버에 알림');
+    } else if (m.type === 'chat_truncate') {
+      const bubble = chatBubbles[m.id];
+      if (bubble) { bubble.textContent = m.text; bubble.classList.add('cut'); }
+      Flow.log('step', '끊긴 답변을 실제로 들린 데까지만 기억: ' + (m.text || '(들린 말 없음)'));
+    } else if (m.type === 'tool') {
+      onTool(m);
+      Flow.tool(m);
+    } else if (m.type === 'knowledge') {
+      Flow.knowledge(m);
+      if (m.state === 'done' || m.state === undefined) onKnowledge(m);
+    } else if (m.type === 'llm') {
+      Flow.llm(m);
+    } else if (m.type === 'tts') {
+      Flow.tts(m);
+    } else if (m.type === 'speech') {
+      (speechStarts[m.seq] = speechStarts[m.seq] || []).push(m);
+    } else if (m.type === 'notice') {
+      setMessage(m.message);
+    } else if (m.type === 'error') {
+      stop(m.message);
+    }
+    return;
+  }
+
+  const view = new DataView(data);
+  if (view.getUint32(0, false) === 0x46484741) {  // "FHGA": the simulated user's voice
+    playGuest(new Int16Array(data.slice(8, 8 + view.getUint32(4, true))));
+    return;
+  }
+  const seq = view.getUint32(4, true);
+  if (seq < minSeq) return;  // generated before an interrupt
+  const startSample = view.getUint32(8, true);
+  const frameCount = view.getUint32(12, true);
+  const audioBytes = view.getUint32(16, true);
+  const inferMs = view.getFloat32(20, true);
+  const droppedSamples = view.getUint32(24, true);
+  let offset = 28;
+
+  const pcm = new Int16Array(data.slice(offset, offset + audioBytes));
+  offset += audioBytes;
+  const blobs = [];
+  for (let i = 0; i < frameCount; i++) {
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    blobs.push(new Blob([new Uint8Array(data, offset, length)], { type: 'image/jpeg' }));
+    offset += length;
+  }
+  const bitmaps = await Promise.all(blobs.map(b => createImageBitmap(b)));
+  if (!running || !ctx) { bitmaps.forEach(b => b.close()); return; }
+
+  const duration = frameCount / cfg.fps;
+  const now = ctx.currentTime;
+  // More than two chunks already queued: we fell behind earlier, so skip this one to catch up.
+  if (playHead - now > 2.2 * duration) { bitmaps.forEach(b => b.close()); return; }
+  const t0 = Math.max(playHead, now + 0.06);
+  playHead = t0 + duration;
+
+  const buffer = ctx.createBuffer(1, pcm.length, SR);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) channel[i] = pcm[i] / 32768;
+  const node = ctx.createBufferSource();
+  node.buffer = buffer;
+  node.connect(outputGain);
+  node.start(t0);
+  scheduled.push({ seq, node, t0, duration });
+  if (scheduled.length > 8) scheduled.shift();
+
+  const latency = ctx.outputLatency || 0;
+  bitmaps.forEach((bitmap, i) => frames.push({ t: t0 + latency + i / cfg.fps, bitmap }));
+
+  if (captureStart !== null) {
+    $('s-delay').textContent = (t0 - (captureStart + startSample / SR)).toFixed(2) + '초';
+  }
+  for (const mark of speechStarts[seq] || []) {
+    const sentAt = speakTimes[mark.id];
+    let delay = null;  // seconds from the end of the question to this sound
+    if (mark.since_utterance_ms != null) {
+      // server-side time since the user stopped talking, plus how long this chunk waits to play
+      delay = mark.since_utterance_ms / 1000 + (t0 + mark.offset - now);
+    } else if (sentAt !== undefined) {
+      delay = t0 + mark.offset - sentAt;
+    }
+    Flow.onAir(mark, delay);
+    if (delay === null) continue;
+    if (mark.phase === 'answer') {
+      // the reply needed a lookup: the first sound (shown already) was only "let me check"
+      const first = $('s-delay').textContent.split(' · 답변')[0];
+      $('s-delay').textContent = first + ' · 답변 ' + delay.toFixed(2) + '초 (조회 ' + (mark.tool_ms / 1000).toFixed(2) + '초)';
+      if (source === 'auto') onMetric({ name: 'answer', delay_ms: delay * 1000 });
+      delete speakTimes[mark.id];
+      continue;
+    }
+    const parts = [];
+    if (mark.speculative) parts.push('선제 응답');
+    if (mark.stt_ms != null) parts.push('인식 ' + (mark.stt_ms / 1000).toFixed(2) + '초');
+    if (mark.llm_ms != null) parts.push('LLM ' + (mark.llm_ms / 1000).toFixed(2) + '초');
+    parts.push('합성 ' + (mark.synth_ms / 1000).toFixed(2) + '초');
+    $('s-delay').textContent = (mark.phase === 'filler' ? '첫 소리 ' : '') + delay.toFixed(2) + '초 (' + parts.join(', ') + ')';
+    if (source === 'auto') onMetric({ name: 'response', delay_ms: delay * 1000, filler: mark.phase === 'filler' });
+    if (mark.phase !== 'filler') delete speakTimes[mark.id];
+  }
+  delete speechStarts[seq];
+  $('s-infer').textContent = Math.round(inferMs) + ' ms / ' + Math.round(duration * 1000) + ' ms';
+  Flow.chunk(inferMs, duration);
+  $('s-drop').textContent = (droppedSamples / SR).toFixed(1) + '초';
+}
+
+// The simulated user's voice plays at once on its own path, so flushing the avatar never cuts it.
+function playGuest(pcm) {
+  const buffer = ctx.createBuffer(1, pcm.length, SR);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) channel[i] = pcm[i] / 32768;
+  const node = ctx.createBufferSource();
+  node.buffer = buffer;
+  node.connect(monitorGain);
+  node.start(ctx.currentTime + 0.05);
+}
+
+const emptyMetrics = () => ({ response: [], answer: [], tools: 0, toolFailures: 0, residual: [],
+  interrupts: 0, falseInterrupts: 0, ignored: 0, discarded: 0, gaps: [] });
+let metrics = emptyMetrics();
+
+function resetMetrics() {
+  metrics = emptyMetrics();
+  $('metrics').innerHTML = '';
+  $('metrics-summary').textContent = '';
+}
+
+function onMetric(m) {
+  const seconds = ms => (ms / 1000).toFixed(2) + '초';
+  const average = list => seconds(list.reduce((a, b) => a + b, 0) / list.length);
+  let line = '', bad = false;
+  if (m.name === 'response') {
+    metrics.response.push(m.delay_ms);
+    line = '응답 지연: 상대의 말이 끝나고 ' + seconds(m.delay_ms) + ' 뒤 아바타가 '
+      + (m.filler ? '"확인해 볼게요"라고 말하기 시작 (조회 필요)' : '답하기 시작');
+  } else if (m.name === 'answer') {
+    metrics.answer.push(m.delay_ms);
+    line = '조회 답변: 상대의 말이 끝나고 ' + seconds(m.delay_ms) + ' 뒤 조회 결과를 말하기 시작';
+  } else if (m.name === 'tool') {
+    metrics.tools += 1;
+    if (!m.ok) { metrics.toolFailures += 1; bad = true; }
+    line = (TOOL_NAMES[m.tool] || m.tool) + ' 조회 ' + (m.ok ? '' : '실패 ') + seconds(m.ms);
+  } else if (m.name === 'interrupt') {
+    metrics.interrupts += 1;
+    metrics.residual.push(m.detect_ms + m.residual_ms);
+    if (m.kind === 'backchannel') { metrics.falseInterrupts += 1; bad = true; }
+    line = (m.kind === 'backchannel' ? '추임새를 끼어들기로 오인해 답변을 끊음: ' : '끼어들기: ')
+      + '감지 ' + seconds(m.detect_ms) + ' + 이후 계속 말한 시간 ' + seconds(m.residual_ms);
+  } else if (m.name === 'backchannel_ignored') {
+    metrics.ignored += 1;
+    line = '추임새("' + m.text + '")를 듣고도 끊지 않고 계속 말함';
+  } else if (m.name === 'speculation_discarded') {
+    metrics.discarded += 1;
+    line = '미리 준비한 답을 버림 (상대가 말을 이어감)';
+  } else if (m.name === 'user_gap') {
+    metrics.gaps.push(m.gap_ms);
+    line = '상대역이 아바타의 말이 끝나고 ' + seconds(m.gap_ms) + ' 뒤 말하기 시작';
+  }
+  if (!line) return;
+  const el = document.createElement('div');
+  el.textContent = line;
+  if (bad) el.className = 'bad';
+  $('metrics').appendChild(el);
+  $('metrics').scrollTop = $('metrics').scrollHeight;
+  const parts = [];
+  if (metrics.response.length) parts.push('응답 지연 평균 ' + average(metrics.response));
+  if (metrics.answer.length) parts.push('조회 답변까지 평균 ' + average(metrics.answer));
+  if (metrics.tools) parts.push('조회 ' + metrics.tools + '회 (실패 ' + metrics.toolFailures + '회)');
+  if (metrics.residual.length) parts.push('끼어든 뒤 멈추기까지 평균 ' + average(metrics.residual));
+  if (metrics.interrupts) parts.push('끼어들기 ' + metrics.interrupts + '회 (추임새 오인 ' + metrics.falseInterrupts + '회)');
+  if (metrics.ignored) parts.push('넘긴 추임새 ' + metrics.ignored + '회');
+  if (metrics.discarded) parts.push('버린 선제 응답 ' + metrics.discarded + '회');
+  $('metrics-summary').textContent = parts.join(' · ');
+}
+
+// "unmute" interrupt: stop everything already scheduled and tell the server how far playback got.
+function flushPlayback(firstFreshSeq) {
+  const now = ctx.currentTime;
+  let playing = null;
+  for (const item of scheduled) {
+    if (item.t0 <= now) playing = item;  // the latest chunk that has started
+  }
+  ws.send(JSON.stringify({
+    type: 'played',
+    seq: playing ? playing.seq : null,
+    offset: playing ? Math.min(now - playing.t0, playing.duration) : 0,
+  }));
+
+  // fade out over 30 ms instead of cutting the waveform, then give later chunks a fresh gain
+  const fade = 0.03;
+  outputGain.gain.setValueAtTime(1, now);
+  outputGain.gain.linearRampToValueAtTime(0, now + fade);
+  scheduled.forEach(item => { try { item.node.stop(now + fade); } catch (err) { /* already ended */ } });
+  scheduled = [];
+  outputGain = ctx.createGain();
+  outputGain.connect(monitorGain);
+
+  frames.forEach(f => f.bitmap.close());
+  frames = [];
+  playHead = 0;
+  speechStarts = {};
+  minSeq = firstFreshSeq;
+}
+
+function draw() {
+  if (ctx && frames.length) {
+    const now = ctx.currentTime;
+    let latest = null;
+    while (frames.length && frames[0].t <= now) {
+      if (latest) latest.bitmap.close();
+      latest = frames.shift();
+    }
+    if (latest) {
+      g.drawImage(latest.bitmap, 0, 0, canvas.width, canvas.height);
+      latest.bitmap.close();
+    }
+  }
+  requestAnimationFrame(draw);
+}
+
+$('toggle').onclick = () => (running ? stop() : start());
+$('monitor').onchange = e => { if (monitorGain) monitorGain.gain.value = e.target.checked ? 1 : 0; };
+$('image').onchange = async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  setMessage('이미지 적용 중...');
+  const form = new FormData();
+  form.append('file', file);
+  form.append('face_crop', $('crop').checked ? 'true' : 'false');
+  try {
+    const res = await fetch('/api/image', { method: 'POST', body: form });
+    const json = await res.json();
+    setMessage(json.ok ? '' : json.message);
+    if (json.ok) showReference();
+  } catch (err) {
+    setMessage('이미지 적용 실패: ' + err.message);
+  }
+};
+
+document.querySelectorAll('input[name=source]').forEach(el => { el.onchange = applySource; });
+$('speak').onclick = speak;
+['voice', 'model', 'barge', 'interrupt-mode', 'speculative', 'tools', 'knowledge', 'knowledge-threshold', 'language', 'length', 'endpoint', 'stt'].forEach(id => { $(id).onchange = sendConfig; });
+$('clear').onclick = () => { if (ws && running) ws.send(JSON.stringify({ type: 'clear' })); };
+$('text').onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); speak(); }
+};
+
+function toggleSettings(open) {
+  $('settings').hidden = !open; $('scrim').hidden = !open;
+  if (open) $('close-settings').focus(); else $('open-settings').focus();
+}
+$('open-settings').onclick = () => toggleSettings(true);
+$('close-settings').onclick = () => toggleSettings(false);
+$('scrim').onclick = () => toggleSettings(false);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('settings').hidden) toggleSettings(false); });
+
+applySource();
+showReference();
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

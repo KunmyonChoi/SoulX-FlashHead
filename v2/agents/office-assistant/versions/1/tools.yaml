@@ -1,0 +1,6 @@
+# 계약서는 v2/tools/<묶음>/<이름>.yaml, 연결되는 곳은 브라우저 조작 서비스(http://127.0.0.1:7895)다.
+#   조회: web_task(일을 맡긴다), web_task_answer(되물음에 대한 사용자의 답을 넘긴다)
+#   변경, 고객 동의 필요(두 단계): web_task_confirm(멈춰 선 단추를 누른다)
+# 도구 묶음(v2/tools/<묶음>/): 아래 이름은 이 묶음들 안에서 찾는다
+tool_packs: [web]
+tools: [web_task, web_task_answer, web_task_confirm]

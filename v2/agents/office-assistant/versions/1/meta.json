@@ -1,0 +1,14 @@
+{
+  "agent_id": "office-assistant",
+  "version": 1,
+  "state": "draft",
+  "created_at": 1795000000.0,
+  "created_by": "claude",
+  "based_on": null,
+  "note": "비서 시나리오 첫 판: 브라우저 조작 서비스에 일을 맡기는 도구 세 개 (web_task, web_task_answer, web_task_confirm)",
+  "safety_change": false,
+  "changed_fields": [],
+  "test_run_id": null,
+  "approved_by": null,
+  "approved_at": null
+}

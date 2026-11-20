@@ -1,0 +1,23 @@
+# v1 조회 도구 (realtime_tools.Toolbox.read_geeknews을 감쌈). 설명과 인자는 v1과 같다.
+name: read_geeknews
+description: 긱뉴스 글 하나의 요약 전체를 가져온다. search_geeknews로 알려준 글 중 하나를 사용자가 더 자세히 물으면 사용한다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    title:
+      type: string
+      description: 그 글의 제목, 또는 제목의 핵심 단어 두세 개.
+  required:
+  - title
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 4.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 그 글을 읽어 볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.v1_lookup:read_geeknews

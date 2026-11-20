@@ -1,0 +1,24 @@
+# 항공: 본인 확인(조회). 성공하면 세션에 "verified" 사실이 생기고, 더미 항공사는 그 예약에만 조회와 변경을 허락한다.
+name: verify_booking
+description: 예약번호와 탑승객의 성, 생년월일로 본인을 확인한다. 예약 내용이나 대체편, 수수료를 다루기 전에 반드시 먼저 호출한다. 고객이 세 값을 모두 말한 뒤에 호출한다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    booking_ref: {type: string, description: "예약번호. 영문과 숫자 6자리. 예: B7K2QF"}
+    last_name: {type: string, description: "탑승객의 성. 예: 홍"}
+    birth_date: {type: string, description: "탑승객의 생년월일. 예: 1988-03-14"}
+  required: [booking_ref, last_name, birth_date]
+output_schema:
+  type: object
+  properties:
+    verified: {type: boolean}
+    booking_ref: {type: string}
+    passenger_name: {type: string}
+grants: [verified]
+timeout_s: 4.0
+retries: 1
+pii_input: [last_name, birth_date]
+pii_output: [passenger_name]
+filler: "본인 확인을 하고 있어요."
+adapter: {kind: python, target: "agentkit.dummy.airline:verify_booking"}

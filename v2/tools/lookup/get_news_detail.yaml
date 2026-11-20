@@ -1,0 +1,23 @@
+# v1 조회 도구 (realtime_tools.Toolbox.get_news_detail을 감쌈). 설명과 인자는 v1과 같다.
+name: get_news_detail
+description: 한 가지 뉴스(사건, 발표, 인물의 소식)에 대해 여러 기사의 앞부분을 가져와 자세한 내용을 알려준다. 사용자가 앞서 들은 뉴스 중 하나를 '더 자세히', '그게 무슨 일이야', '왜 그런 거야'처럼 더 물으면 사용한다. 제목만 훑을 때는 search_news를 쓴다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    topic:
+      type: string
+      description: '그 뉴스를 가리키는 핵심 단어 두세 개. 기사 제목에서 고른다. 예: 성남 연쇄 추돌, 수능 스마트기기 반납.'
+  required:
+  - topic
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 4.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 자세한 내용을 찾아볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.v1_lookup:get_news_detail

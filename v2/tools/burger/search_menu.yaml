@@ -1,0 +1,17 @@
+# 드라이브스루: 메뉴 찾기(조회). 가격, 세트 가격, 품절, 아침 메뉴 여부, 알레르기 성분이 함께 나온다.
+name: search_menu
+description: 햄버거 매장의 메뉴를 찾는다. 메뉴가 있는지, 가격, 품절 여부, 알레르기 성분을 말하기 전에 반드시 호출한다. query에 메뉴 이름이나 종류(버거, 사이드, 음료, 디저트)를 넣는다. 전체 메뉴는 "전체 메뉴"로 찾는다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    query: {type: string, description: "메뉴 이름이나 종류. 예: 불고기버거, 음료, 전체 메뉴"}
+  required: [query]
+output_schema:
+  type: object
+  properties:
+    items: {type: array, description: "[{id, name, kind, price, allergens, sold_out, breakfast}]. allergens가 null이면 성분표가 없어 확인할 수 없다"}
+timeout_s: 4.0
+retries: 1
+filler: "메뉴를 확인할게요."
+adapter: {kind: python, target: "agentkit.dummy.burger:search_menu"}

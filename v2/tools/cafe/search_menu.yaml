@@ -1,0 +1,19 @@
+# 카페(키오스크): 메뉴 찾기(조회 도구). 결과 항목은 고객 화면의 메뉴 영역에서 강조된다(display: items).
+name: search_menu
+description: 메뉴를 이름, 설명, 특징으로 찾는다. 고객이 "달달한 거", "카페인 없는 음료", "따뜻한 차", "케이크 있어요?"처럼 조건이나 추천을 물을 때 사용한다. 찾은 메뉴는 고객 화면에 강조되므로 두세 개만 말로 소개한다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    query: {type: string, description: "찾을 말. 예: 달달한, 카페인 없는, 따뜻한 차, 라떼, 케이크"}
+  required: [query]
+output_schema:
+  type: object
+  properties:
+    query: {type: string}
+    items: {type: array, description: "찾은 메뉴. get_menu의 items와 같은 모양"}
+timeout_s: 4.0
+retries: 1
+filler: "메뉴를 찾아볼게요."
+display: {kind: items}
+adapter: {kind: dummy, target: "cafe:search_menu"}

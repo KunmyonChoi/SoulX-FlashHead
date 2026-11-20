@@ -1,0 +1,20 @@
+# 의원: 빈 진료 시간(조회).
+name: list_available_slots
+description: 어느 날의 빈 진료 시간을 알려 준다. 예약 가능한 시간을 말하기 전에 반드시 호출한다. 환자가 원하는 날짜를 말한 뒤에 호출하고, 오전이나 오후를 원하면 period에 넣는다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    date: {type: string, description: "날짜. 2026-11-19 형식. 시스템 안내의 오늘 날짜를 기준으로 계산한다"}
+    period: {type: string, enum: ["오전", "오후"], description: "시간대. 환자가 말했을 때만 넣는다"}
+  required: [date]
+output_schema:
+  type: object
+  properties:
+    date: {type: string}
+    slots: {type: array, description: "빈 시각들. [\"09:00\", \"09:30\"]"}
+    closed: {type: boolean, description: "휴진일이면 true"}
+timeout_s: 4.0
+retries: 1
+filler: "빈 시간을 찾아볼게요."
+adapter: {kind: python, target: "agentkit.dummy.clinic:list_available_slots"}

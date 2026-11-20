@@ -1,0 +1,21 @@
+guards:
+  # 담지 않고 담았다고 말하는 것. 앞 턴에 담은 것을 되짚는 말("아까 담으신")은 걸리지 않게 끝맺는 꼴만 본다
+  - id: no_fake_add
+    kind: claims_lookup
+    pattern: "(담았(어요|습니다)|담아\\s?(드렸|놨|두었|뒀)|추가(했(어요|습니다)|해\\s?드렸|됐|되었))"
+    unless_tools: [add_to_cart, remove_from_cart, get_cart, request_payment]
+    nudge: "(시스템 안내: add_to_cart를 호출하지 않고 담았다고 말하려 했습니다. 담으려면 지금 add_to_cart를 호출하고, 아직 물어볼 것이 있으면 담았다는 말 없이 물어보세요.)"
+  - id: no_fake_payment
+    kind: claims_lookup
+    pattern: "(결제\\S{0,2}\\s?(완료|됐|되었|끝났)|주문\\S{0,2}\\s?접수\\S{0,2}\\s?(됐|되었|완료))"
+    unless_tools: [request_payment]
+    nudge: "(시스템 안내: request_payment를 호출하지 않고 결제가 끝난 것처럼 말하려 했습니다. 고객이 동의했다면 지금 request_payment를 호출하고, 아니라면 결제되었다는 말을 하지 마세요.)"
+  - id: no_fake_staff_call
+    kind: claims_lookup
+    pattern: "직원\\S{0,3}\\s?(불렀|호출했|불러\\s?드렸|불러\\s?드리겠|불러\\s?드릴게|곧\\s?(올|오실))"
+    unless_tools: [handoff_to_human]
+    nudge: "(시스템 안내: handoff_to_human을 호출하지 않고 직원을 부른다고 말하려 했습니다. 직원이 필요하면 지금 handoff_to_human을 호출하세요.)"
+  - id: no_spoken_card_number
+    kind: regex
+    pattern: "(카드\\s?번호|비밀\\s?번호|전화\\s?번호)\\S{0,2}\\s?(알려|말씀|불러)"
+    nudge: "(시스템 안내: 카드 번호, 비밀번호, 전화번호를 말로 묻지 마세요. 결제는 단말기에서 한다고 안내하세요.)"

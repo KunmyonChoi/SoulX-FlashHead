@@ -1,0 +1,24 @@
+# 항공: 변경 비용(조회).
+name: quote_change_fee
+description: 예약을 어느 항공편으로 바꿀 때 드는 변경 수수료와 운임 차액을 본다. 변경하기 전에 반드시 호출해 금액을 읽어 준다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    booking_ref: {type: string, description: "예약번호"}
+    flight_no: {type: string, description: "바꿀 편명. search_alternative_flights 결과에서 고른다. 예: KE 1204"}
+    date: {type: string, description: "그 편의 날짜. 2026-11-22 형식"}
+  required: [booking_ref, flight_no, date]
+output_schema:
+  type: object
+  properties:
+    flight_no: {type: string}
+    departure: {type: string}
+    fee: {type: integer}
+    fare_difference: {type: integer}
+    total: {type: integer}
+requires: [verified]
+timeout_s: 4.0
+retries: 1
+filler: "수수료를 확인할게요."
+adapter: {kind: python, target: "agentkit.dummy.airline:quote_change_fee"}

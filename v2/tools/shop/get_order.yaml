@@ -1,0 +1,34 @@
+# 쇼핑몰: 주문 조회. 본인 확인이 끝난 주문만 볼 수 있다.
+name: get_order
+description: 본인 확인이 끝난 주문의 내용(상품, 결제 금액, 주문일, 배송 상태, 환불 가능 여부, 배송지)을 조회한다. 고객이 주문 내용이나 환불 가능 여부를 물으면 사용한다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    order_id: {type: string, description: "주문번호. 예: A1001"}
+  required: [order_id]
+output_schema:
+  type: object
+  properties:
+    order_id: {type: string}
+    customer_name: {type: string}
+    product_name: {type: string}
+    amount: {type: integer, description: "결제 금액(원)"}
+    ordered_at: {type: string, description: "주문일 YYYY-MM-DD"}
+    status: {type: string, enum: [preparing, in_transit, delivered]}
+    status_text: {type: string}
+    delivered_at: {type: string}
+    carrier: {type: string}
+    tracking_number: {type: string}
+    address: {type: string}
+    refundable: {type: boolean}
+    refund_blocked_reason: {type: string, enum: [already_refunded, not_delivered, period_over, over_limit]}
+    refund_deadline: {type: string}
+    refund: {type: object}
+requires: [verified]
+timeout_s: 4.0
+retries: 1
+pii_input: []
+pii_output: [customer_name, address]
+filler: "주문을 확인해 볼게요."
+adapter: {kind: dummy, target: "shop:get_order"}

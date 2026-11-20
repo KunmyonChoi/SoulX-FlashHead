@@ -1,0 +1,23 @@
+# 쇼핑몰: 본인 확인. 성공하면 세션에 "verified" 사실이 생기고, 더미 쇼핑몰은 그 주문번호에만 조회를 허락한다.
+name: verify_customer
+description: 주문번호와 휴대폰 번호 뒤 4자리로 고객 본인을 확인한다. 주문 내용, 배송, 환불을 다루기 전에 반드시 먼저 호출한다. 고객이 두 값을 모두 말한 뒤에 호출한다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    order_id: {type: string, description: "주문번호. 예: A1001"}
+    phone_last4: {type: string, description: "휴대폰 번호 뒤 4자리. 숫자 4개. 예: 1234"}
+  required: [order_id, phone_last4]
+output_schema:
+  type: object
+  properties:
+    verified: {type: boolean}
+    order_id: {type: string}
+    customer_name: {type: string}
+grants: [verified]
+timeout_s: 4.0
+retries: 1
+pii_input: [phone_last4]
+pii_output: [customer_name]
+filler: "본인 확인을 하고 있어요."
+adapter: {kind: dummy, target: "shop:verify_customer"}

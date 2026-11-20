@@ -1,0 +1,14 @@
+{
+  "agent_id": "shop-support",
+  "version": 1,
+  "state": "deployed",
+  "created_at": 1794905832.67,
+  "created_by": "wp1",
+  "based_on": null,
+  "note": "대표 시나리오(쇼핑몰 주문 문의) 첫 버전",
+  "safety_change": false,
+  "changed_fields": [],
+  "test_run_id": null,
+  "approved_by": "초기 등록(seed)",
+  "approved_at": 1794905832.67
+}

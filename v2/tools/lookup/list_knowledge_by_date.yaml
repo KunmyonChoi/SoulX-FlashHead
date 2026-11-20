@@ -1,0 +1,23 @@
+# v1 조회 도구 (realtime_mic_app.KnowledgeClient.list_by_date를 옮겨 적음). 설명과 인자는 v1과 같다.
+name: list_knowledge_by_date
+description: 지식베이스에 특정 날짜에 추가된 자료의 목록(제목과 요약)을 가져온다. '오늘 들어온 자료', '어제 추가된 것', '11월 13일에 넣은 자료', '최근에 추가된 자료'처럼 추가된 날짜나 최신 여부로 자료를 물으면 사용한다. 내용에 대한 질문에는 쓰지 않는다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    date:
+      type: string
+      description: 'YYYY-MM-DD 형식의 날짜. 예: 2026-11-16. 날짜 없이 가장 최근에 추가된 자료를 원하면 빈 문자열.'
+  required:
+  - date
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 4.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 자료를 확인해 볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.v1_lookup:list_knowledge_by_date

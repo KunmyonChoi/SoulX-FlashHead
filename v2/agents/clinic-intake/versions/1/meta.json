@@ -1,0 +1,14 @@
+{
+  "agent_id": "clinic-intake",
+  "version": 1,
+  "state": "tested",
+  "created_at": 1794906008.477,
+  "created_by": "wp1",
+  "based_on": null,
+  "note": "뼈대: 병원 예약 접수 (형식 확인용)",
+  "safety_change": false,
+  "changed_fields": [],
+  "test_run_id": "clinic-intake.v1.20261118-193717-ce32",
+  "approved_by": null,
+  "approved_at": null
+}

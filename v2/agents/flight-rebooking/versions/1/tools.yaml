@@ -1,0 +1,7 @@
+# 계약서는 v2/tools/<묶음>/<이름>.yaml, 연결되는 곳은 더미 항공사다.
+#   조회: verify_booking(본인 확인), get_booking, search_alternative_flights, quote_change_fee (뒤의 셋은 본인 확인이 먼저)
+#   변경, 고객 동의 필요(두 단계): change_flight
+#   상담원 연결: handoff_to_human
+# 도구 묶음(v2/tools/<묶음>/): 아래 이름은 이 묶음들 안에서 찾는다
+tool_packs: [airline, common]
+tools: [verify_booking, get_booking, search_alternative_flights, quote_change_fee, change_flight, handoff_to_human]

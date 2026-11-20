@@ -1,0 +1,10 @@
+# 도구 묶음(v2/tools/<묶음>/): 아래 이름은 이 묶음들 안에서 찾는다
+tool_packs: [lookup]
+tools:
+  - get_weather
+  - search_news
+  - get_news_detail
+  - search_geeknews
+  - read_geeknews
+  - search_wikipedia
+  - list_knowledge_by_date

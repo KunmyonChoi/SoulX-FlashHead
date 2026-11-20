@@ -1,0 +1,25 @@
+# 항공: 예약 내용(조회). 본인 확인이 먼저다.
+name: get_booking
+description: 본인 확인이 끝난 예약의 구간, 편명, 출발 일시와 결항 여부를 본다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    booking_ref: {type: string, description: "예약번호. 예: B7K2QF"}
+  required: [booking_ref]
+output_schema:
+  type: object
+  properties:
+    booking_ref: {type: string}
+    passenger_name: {type: string}
+    from: {type: string}
+    to: {type: string}
+    flight_no: {type: string}
+    departure: {type: string}
+    disrupted: {type: boolean}
+requires: [verified]
+timeout_s: 4.0
+retries: 1
+pii_output: [passenger_name]
+filler: "예약을 확인할게요."
+adapter: {kind: python, target: "agentkit.dummy.airline:get_booking"}

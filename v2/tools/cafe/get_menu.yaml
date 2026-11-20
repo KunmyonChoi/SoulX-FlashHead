@@ -1,0 +1,17 @@
+# 카페(키오스크): 전체 메뉴(조회 도구). 결과는 고객 화면의 메뉴 영역을 채운다(display: menu).
+# 모델이 읽는 글에는 종류, id, 이름, 가격, 옵션, 품절이 짧게 들어 있다.
+name: get_menu
+description: 카페의 전체 메뉴를 가져온다. 메뉴의 id, 가격, 옵션, 품절 여부를 알아야 하는데 대화에 아직 없을 때 사용한다. 인자는 없다. 메뉴는 고객 화면에 표시되므로 전체를 말로 읽지 않는다.
+effect: read
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties:
+    categories: {type: array, description: "종류별 메뉴. [{id, name, items: [{id, name, price, description, tags, sold_out, options}]}]"}
+timeout_s: 4.0
+retries: 1
+filler: "메뉴를 보여 드릴게요."
+display: {kind: menu}
+adapter: {kind: dummy, target: "cafe:get_menu"}

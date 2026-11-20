@@ -1,0 +1,8 @@
+# 계약서는 v2/tools/<묶음>/<이름>.yaml, 연결되는 곳은 더미 카페다.
+#   조회: get_menu(전체 메뉴), search_menu(이름·설명·태그로 찾기), get_cart(지금 주문 내역)
+#   변경, 확인 없이 바로 실행: add_to_cart, remove_from_cart, apply_coupon (세션 안에서만 유효하고 되돌릴 수 있다)
+#   변경, 고객 동의 필요(두 단계): request_payment
+#   직원 호출: handoff_to_human
+# 도구 묶음(v2/tools/<묶음>/): 아래 이름은 이 묶음들 안에서 찾는다
+tool_packs: [cafe, common]
+tools: [get_menu, search_menu, get_cart, add_to_cart, remove_from_cart, apply_coupon, request_payment, handoff_to_human]
