@@ -149,6 +149,13 @@ let ctx = null, ws = null, mic = null, monitorGain = null;
 let cfg = null, running = false, channel = 'text', handedOff = false;
 let playHead = 0;          // ctx time at which the next chunk should start
 let frames = [];           // {t, bitmap}, sorted by t
+
+// Decoded frames live outside the JS heap (about 1 MB each) and are freed only by close(). draw() frees them as
+// they are shown, but a hidden tab gets no animation frames, so frames that are never shown must be freed here.
+const MAX_QUEUED_FRAMES = 120;   // about five seconds of video
+function dropStaleFrames(now) {
+  while (frames.length && (frames[0].t < now - 0.2 || frames.length > MAX_QUEUED_FRAMES)) frames.shift().bitmap.close();
+}
 let chain = Promise.resolve();
 let scheduled = [];        // audio chunks handed to WebAudio: {seq, node, t0, duration}
 let outputGain = null;     // gain shared by the chunks scheduled since the last flush
@@ -1333,7 +1340,8 @@ async function onMessage(data) {
   const pcm = new Int16Array(data.slice(offset, offset + audioBytes));
   offset += audioBytes;
   const blobs = [];
-  for (let i = 0; i < frameCount; i++) {
+  // a hidden tab shows nothing: keep the sound, do not decode pictures nobody will see
+  for (let i = 0; i < frameCount && !document.hidden; i++) {
     const length = view.getUint32(offset, true);
     offset += 4;
     blobs.push(new Blob([new Uint8Array(data, offset, length)], { type: 'image/jpeg' }));
@@ -1365,7 +1373,9 @@ function schedule(seq, pcm, rate, duration, bitmaps, canSkip) {
     scheduled.push({ seq, node, t0, duration });
   }
   const latency = ctx.outputLatency || 0;
+  dropStaleFrames(now);
   bitmaps.forEach((bitmap, i) => frames.push({ t: t0 + latency + i / (cfg.fps || 25), bitmap }));
+  dropStaleFrames(now);
   audioChunks += 1; audioSeconds += duration;
   $('s-audio').textContent = audioChunks + '청크 · ' + audioSeconds.toFixed(1) + '초';
 
