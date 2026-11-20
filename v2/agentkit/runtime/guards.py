@@ -93,3 +93,24 @@ class GuardSet:
                     continue
             return guard
         return None
+
+
+# A reply that has started going round in circles: "십육이 아닌 십육이 아니라 십육이 아니고 십육...", "이의 제곱 곱하기
+# 구가 아니라 이의 제곱 곱하기 구가 아닌 ..." (2026-11-20: spoken in full, about 270 characters). Two corrections of a
+# word by the same word, or one phrase of 8+ letters said three times. A plain step-by-step explanation ("이로 나누면
+# 육십사, 육십사를 이로 나누면 삼십이 ...") is neither.
+_SELF_DENIAL = re.compile(r"(\S{2,12}?)(?:이|가)?\s?아(?:닌|니라|니고)\s?\1")
+_PHRASE = re.compile(r"(?=(\S[^.?!]{8,30}?)\s)")
+
+
+def loop_start(text):
+    """Where a looping reply began to loop (an index into text), or None."""
+    hits = list(_SELF_DENIAL.finditer(text or ""))
+    if len(hits) >= 2:
+        return hits[0].start()
+    for m in _PHRASE.finditer(text or ""):
+        phrase = m.group(1)
+        if len(re.sub(r"\s", "", phrase)) >= 8 and text.count(phrase) >= 3:
+            first = text.find(phrase)
+            return text.find(phrase, first + 1)          # the first saying stays, the repeats go
+    return None

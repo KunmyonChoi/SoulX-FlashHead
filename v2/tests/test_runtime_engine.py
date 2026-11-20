@@ -541,8 +541,8 @@ async def test_truncate_last_reply():
     await collect(engine, "환불은요?")
     assert len(engine.history) == 8
     engine.truncate_last_reply("")                          # nothing was heard
-    assert [m["role"] for m in engine.history] == ["user", "assistant", "tool", "assistant", "user"]
-    assert engine.history[-1]["content"] == "환불은요?"      # the reply and its tool exchange are gone
+    # the reply and its tool exchange are gone; the words wait to go in front of the next ones (test_runtime_carry)
+    assert [m["role"] for m in engine.history] == ["user", "assistant", "tool", "assistant"]
     record = recorder.turns[-1]
     assert record.turn == 2 and record.agent_text == "" and record.interrupted is True
     assert len(recorder.last_turns()) == 2                   # still one record per turn
@@ -550,8 +550,8 @@ async def test_truncate_last_reply():
     # the next reply does not see the removed exchange
     llm.scripts.append([text("네, 말씀하세요.")])
     await collect(engine, "여보세요?")
-    assert [m["role"] for m in llm.calls[-1]["messages"]] == ["system", "user", "assistant", "tool", "assistant",
-                                                              "user", "user"]
+    assert [m["role"] for m in llm.calls[-1]["messages"]] == ["system", "user", "assistant", "tool", "assistant", "user"]
+    assert llm.calls[-1]["messages"][-1]["content"].endswith("환불은요? 여보세요?")
 
 
 async def test_truncate_with_everything_heard_changes_nothing():

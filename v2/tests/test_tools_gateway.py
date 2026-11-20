@@ -49,7 +49,7 @@ def scripted(effect="read", script=("ok",), preview=None, recorder=None, **field
 
 
 def test_build_gateway_reads_all_contracts(gateway):
-    assert len(gateway.names()) == 50 and {"shop.get_order", "cafe.search_menu", "burger.search_menu",
+    assert len(gateway.names()) == 51 and {"shop.get_order", "cafe.search_menu", "burger.search_menu",
                                            "common.handoff_to_human", "airline.change_flight"} <= set(gateway.names())
     assert gateway.resolve("search_menu", ["burger", "common"]) == "burger.search_menu"
     for method in ("names", "contract", "specs", "call", "facts", "end_session"):

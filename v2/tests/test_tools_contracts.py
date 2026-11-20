@@ -26,7 +26,7 @@ FLIGHT = ["verify_booking", "get_booking", "search_alternative_flights", "quote_
 
 GOOGLE = ["list_events", "find_free_time", "create_event", "mail_briefing", "search_mail", "read_mail", "send_mail", "create_draft", "send_draft",
           "list_mail", "cleanup_mail", "undo_cleanup", "cancel_send"]
-PACKS = {"shop": SHOP[:4], "common": SHOP[4:], "lookup": V1, "cafe": CAFE, "web": WEB, "clinic": CLINIC, "burger": DRIVE, "airline": FLIGHT,
+PACKS = {"shop": SHOP[:4], "common": SHOP[4:] + ["calculate"], "lookup": V1, "cafe": CAFE, "web": WEB, "clinic": CLINIC, "burger": DRIVE, "airline": FLIGHT,
          "google": GOOGLE}
 
 
@@ -339,14 +339,14 @@ def test_api_tools():
     app.include_router(router)
     client = TestClient(app)
     body = client.get("/api/tools").json()
-    assert body["errors"] == [] and [t["name"] for t in body["tools"]] == sorted(SHOP + V1 + CAFE + WEB + CLINIC + DRIVE + FLIGHT + GOOGLE)
+    assert body["errors"] == [] and [t["name"] for t in body["tools"]] == sorted(SHOP + ["calculate"] + V1 + CAFE + WEB + CLINIC + DRIVE + FLIGHT + GOOGLE)
     assert {t["id"] for t in body["tools"]} >= {"cafe.search_menu", "burger.search_menu", "common.handoff_to_human"}
     by_name = {t["id"].split(".")[1] if t["pack"] != "burger" else t["id"]: t for t in body["tools"]}
     assert client.get("/api/tools/cafe.add_to_cart").json()["pack"] == "cafe"
     assert client.get("/api/tools/get_order").json()["id"] == "shop.get_order"          # a bare name only one pack has
     assert client.get("/api/tools/add_to_cart").status_code == 404                      # two packs have it
     kiosk = client.get("/api/tools?packs=cafe,common").json()["tools"]                  # what one agent's names mean
-    assert sorted(x["id"] for x in kiosk) == sorted(["cafe." + n for n in CAFE] + ["common.handoff_to_human"])
+    assert sorted(x["id"] for x in kiosk) == sorted(["cafe." + n for n in CAFE] + ["common.handoff_to_human", "common.calculate"])
     drive = {x["name"]: x for x in client.get("/api/tools?packs=burger").json()["tools"]}
     assert drive["add_to_cart"]["pack"] == "burger" and drive["add_to_cart"]["display"] is None
     assert client.get("/api/tools/cafe.get_cart").json()["display"]["kind"] == "cart"

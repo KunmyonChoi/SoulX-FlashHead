@@ -1,0 +1,18 @@
+{
+  "agent_id": "office-assistant",
+  "version": 5,
+  "state": "tested",
+  "created_at": 1795179192.6267645,
+  "created_by": "claude",
+  "based_on": 4,
+  "note": "calculate 도구 추가, 계산 시험 추가",
+  "safety_change": true,
+  "changed_fields": [
+    "tools",
+    "tool_packs",
+    "tests.personas"
+  ],
+  "test_run_id": "office-assistant.v5.20261120-215818-0b73",
+  "approved_by": null,
+  "approved_at": null
+}

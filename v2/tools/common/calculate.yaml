@@ -1,0 +1,27 @@
+# 계산기 (agentkit/tools/calc.py): 모델이 직접 셈하면 틀린다(2026-11-20, 128의 소인수분해). 숫자가 나오는 답은 이 도구로.
+name: calculate
+description: 사칙연산, 거듭제곱, 제곱근, 백분율 같은 계산과 소인수분해를 정확하게 한다. 사용자가 계산을 부탁하거나 답에 계산이 필요하면 직접 셈하지 말고 반드시 이 도구를 쓴다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    expression:
+      type: string
+      description: "숫자와 기호로 적은 식. 예: 128*3, (4500+5000)*2, 2**7, sqrt(2), 35000*0.15. 소인수분해는 그 수 하나만(예: 128)"
+    task:
+      type: string
+      enum: [evaluate, factorize]
+      default: evaluate
+      description: "evaluate는 식의 값, factorize는 소인수분해"
+  required: [expression]
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 3.0
+retries: 0
+pii_input: []
+pii_output: []
+filler: 계산해 볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.calc:calculate

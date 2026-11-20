@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from .. import config
 from ..contracts import ReplyEvent, SessionMeta, Span, ToolContext, ToolResult, TurnRecord
-from .guards import GuardSet, empty_wait_guard, is_empty_wait
+from .guards import GuardSet, empty_wait_guard, is_empty_wait, loop_start
 from .templates import Missing, fill as fill_template
 from .knowledge import ASKS_ELSEWHERE, ASKS_KNOWLEDGE, BACK_REFERENCE, knowledge_first
 from .situation import situation as situation_note
@@ -45,6 +45,9 @@ class NullRecorder:
     def audio(self, session_id, turn, role, pcm16): pass
 
     def end_session(self, session_id, status): pass
+
+
+CARRY_S = 20.0     # a cut-off turn's words are put in front of the next one said within this many seconds
 
 
 class _Turn:
@@ -117,6 +120,7 @@ class Engine:
         self._contracts = None
         self._tool_ids = {}        # bare tool name -> the gateway's id of it
         self._opening_entries = []              # the opening's messages: head of the history, never trimmed
+        self._carry = None         # (words, time): a customer turn cut off before any of its answer was heard
         self._opened = False
         settings = dict(settings or {})
         # which screens the customer's page can draw ("mail_list,mail,..."); None: not said, every screen counts as
@@ -417,8 +421,20 @@ class Engine:
         if self._last is not None and not self._last.finished:
             self._abort(self._last)  # the consumer walked away from the reply before
         user_text = str(user_text or "").strip()
+        carried = None
+        if self._carry and _touch is None and not _notice:
+            words, at = self._carry
+            if time.time() - at <= CARRY_S and user_text:
+                carried = words
+                user_text = f"{words} {user_text}"
+            else:
+                self._carry = None
+        if carried and not speculative:
+            self._carry = None      # a speculative reply may still be dropped: then the words wait for the next one
         self.turn += 1
         state = _Turn(self.turn, user_text, bool(speculative), t_user_end or time.time(), self._last)
+        state.carried = carried
+        state.touch = _touch is not None
         state.notice = bool(_notice)
         self._last = state
         reply = state.reply
@@ -535,6 +551,7 @@ class Engine:
             regenerated = False
             empty_retry = False
             wait_followed = False   # the empty-wait rule gets one continuation per reply
+            looped = False          # the reply went round in circles and was cut (guards.loop_start)
             confirm_pending = False
             round_results = []    # (call, contract, result) of the latest tool round
             filler_held = False   # the filler was skipped because a reply template may answer at once
@@ -742,6 +759,26 @@ class Engine:
                         pass_text += value
                         if state.t_first is None:
                             state.t_first = time.time()
+                        start = loop_start(reply["content"]) if not looped else None
+                        if start is not None:
+                            # going round in circles: keep what was said before the loop (what was spoken stays),
+                            # say one line instead, and end the reply
+                            looped = True
+                            said = len(reply["content"]) - len(buffer)
+                            cut = max(said, max(reply["content"].rfind(mark, 0, start) for mark in ".?!,") + 1)
+                            tail = reply["content"][said:cut]
+                            reply["content"] = reply["content"][:cut].rstrip(" ,") + " " + line("loop_cut", turn_language)
+                            buffer = ""
+                            self._span(state, "guard", time.time(), name="builtin_no_loop",
+                                       input={"sentence": pass_text[-200:]}, attrs={"guard_id": "builtin_no_loop", "action": "cut"})
+                            logger.info(f"[{self.session_id}] guard builtin_no_loop (cut)")
+                            yield ReplyEvent(type="replace", text=reply["content"], data={"guard_id": "builtin_no_loop", "action": "cut"})
+                            spoken = speakable(tail.rstrip(" ,") + " " + line("loop_cut", turn_language))
+                            if spoken:
+                                answer_started = True
+                                yield ReplyEvent(type="piece", text=spoken)
+                            calls = []
+                            break
                         yield ReplyEvent(type="delta", text=value)
                         while True:
                             piece, buffer = take_piece(buffer, PIECE_CHARS if answer_started else FIRST_PIECE_CHARS)
@@ -1157,6 +1194,15 @@ class Engine:
             self._forget(state.reply)
             for entry in state.tool_entries:
                 self._forget(entry)
+            # The customer had only paused: "메일 목록이 GUI로 보이는게 아니라" / "그냥" / "대화 기록 화면에만 보여"
+            # came as three turns, each answered and cut (2026-11-20). Their words are kept and put in front of what
+            # they say next, so the answer is to the whole sentence. Not after a change that really ran.
+            contracts = self._tool_contracts()
+            wrote = any((getattr(contracts.get(name), "effect", "read") or "read") != "read" for name in state.done)
+            if not wrote and not state.opening and not getattr(state, "notice", False) and not getattr(state, "touch", False) \
+                    and state.user_message["content"]:
+                self._carry = (state.user_message["content"], time.time())
+                self._forget(state.user_message)
         self._span(state, "interrupt", time.time(), attrs={"heard_chars": len(heard)})
         self._record(state)
 
@@ -1172,6 +1218,8 @@ class Engine:
         if state is None or state.discarded or state.finished or not state.speculative:
             return False
         state.speculative = False
+        if getattr(state, "carried", None):
+            self._carry = None
         for span in state.pending_spans:
             self._safe(self.recorder.span, span)
         state.pending_spans.clear()
