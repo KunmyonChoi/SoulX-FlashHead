@@ -561,6 +561,33 @@ async def _recipient(google, value):
 
 
 async def create_draft(arguments, ctx):
+    google, to, subject, body, reply_to = await _mail_request(arguments, ctx)
+    draft = await google.create_draft(to, subject, body, reply_to)
+    return ok(f"초안을 Gmail 임시보관함에 만들었습니다(보내지 않음). 초안 번호 {draft['id']}, 받는 사람 {_display(to)}, "
+              f"제목 '{subject}'.\n본문: {body}\n나중에 보내라고 하면 send_draft를 이 초안 번호로 부르세요.",
+              {"draft_id": draft["id"]})
+
+
+def _gist(body, limit=70):
+    """The body for the spoken confirmation: whole if short, else cut at a word with "…"."""
+    text = _flat(body)
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    return (cut[:cut.rfind(" ")] if " " in cut else cut).rstrip(",.") + "…"
+
+
+def _display(to):
+    return re.sub(r"\s*<[^>]+>", "", to) or to
+
+
+async def preview_send_draft(arguments, ctx):
+    draft = await backend(ctx).get_draft(str(arguments.get("draft_id") or ""))
+    return ok("", {"to": _display(draft["to"]), "subject": draft["subject"], "gist": _gist(draft["body"])})
+
+
+async def _mail_request(arguments, ctx):
+    """(google, to, subject, body, reply_to) of a mail to write, as create_draft reads them."""
     google = backend(ctx)
     reply_to = None
     if arguments.get("reply_to"):
@@ -574,22 +601,24 @@ async def create_draft(arguments, ctx):
     body = str(arguments.get("body") or "").strip()
     if not subject or not body:
         raise ToolFailure("invalid_input", "제목과 본문이 모두 있어야 합니다. 사용자에게 빠진 것을 물어보세요.")
+    return google, to, subject, body, reply_to
+
+
+async def preview_send_mail(arguments, ctx):
+    _, to, subject, body, _ = await _mail_request(arguments, ctx)
+    return ok("", {"sentence": f"{_display(to)}에게 '{subject}' 메일을 보낼까요? 내용은 '{_gist(body)}'입니다."})
+
+
+async def send_mail(arguments, ctx):
+    """Writes the mail and sends it: the second phase of one two-phase write (the first only read it out)."""
+    google, to, subject, body, reply_to = await _mail_request(arguments, ctx)
     draft = await google.create_draft(to, subject, body, reply_to)
-    return ok(f"초안을 만들었습니다(아직 보내지 않음). 초안 번호 {draft['id']}, 받는 사람 {to}, 제목 '{subject}'.\n"
-              f"본문: {body}\n사용자에게 받는 사람과 내용을 짧게 확인받고, 보내라고 하면 send_draft를 이 초안 번호로 부르세요.",
-              {"draft_id": draft["id"]})
-
-
-async def preview_send_draft(arguments, ctx):
-    draft = await backend(ctx).get_draft(str(arguments.get("draft_id") or ""))
-    name = re.sub(r"\s*<[^>]+>", "", draft["to"]) or draft["to"]
-    gist = re.sub(r"\s+", " ", draft["body"])[:60]
-    return ok("", {"to": name, "subject": draft["subject"], "gist": gist})
+    await google.send_draft(draft["id"])
+    return ok(f"{_display(to)}에게 '{subject}' 메일을 보냈습니다.", {"sent": True}, executed=True)
 
 
 async def send_draft(arguments, ctx):
     google = backend(ctx)
     draft = await google.get_draft(str(arguments.get("draft_id") or ""))
     await google.send_draft(draft["id"])
-    name = re.sub(r"\s*<[^>]+>", "", draft["to"]) or draft["to"]
-    return ok(f"{name}에게 '{draft['subject']}' 메일을 보냈습니다.", {"sent": True}, executed=True)
+    return ok(f"{_display(draft['to'])}에게 '{draft['subject']}' 메일을 보냈습니다.", {"sent": True}, executed=True)

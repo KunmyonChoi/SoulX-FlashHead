@@ -1014,8 +1014,16 @@ class Engine:
 
     def _guard_check(self, sentence, tools):
         done, asked = tools
+        found = self.guards.check(sentence, done)
+        if found is None or not asked:
+            return found
         question = sentence.rstrip().rstrip("\"')」』 ").endswith(("?", "？"))
-        return self.guards.check(sentence, done | asked if question else done)
+        if not question and found.kind == "claims_lookup" and set(found.unless_tools or []) & asked:
+            # the sentence splitter may keep "…보낼까요? 내용은 '안녕하세요, ○○ 님." together (quotes): what
+            # counts is whether each match is itself a question
+            matches = list(re.finditer(found.pattern, sentence))
+            question = bool(matches) and all(re.match(r"\s*[?？]", sentence[m.end():m.end() + 3]) for m in matches)
+        return self.guards.check(sentence, done | asked) if question else found
 
     def _pending_answer(self, state):
         """The customer's answer to a confirmation question: the call that asked it, to be made again now.

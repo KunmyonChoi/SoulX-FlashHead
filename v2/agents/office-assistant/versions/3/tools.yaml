@@ -1,0 +1,12 @@
+tool_packs:
+- google
+tools:
+- list_events
+- find_free_time
+- create_event
+- mail_briefing
+- search_mail
+- read_mail
+- send_mail
+- create_draft
+- send_draft

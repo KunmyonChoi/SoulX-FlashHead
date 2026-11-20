@@ -120,3 +120,14 @@ async def test_after_an_unclear_answer_the_question_is_asked_again_if_the_model_
     assert [e.text for e in events if e.type == "piece"][-1] == ASK
     told = [m for m in llm.calls[-1]["messages"] if m["role"] == "tool"][-1]["content"]
     assert "취소되지 않고" in told                                # the model is told the request still waits
+
+
+async def test_the_tools_question_followed_by_a_quoted_text_is_still_its_question():
+    guard = {"id": "confirm_through_tool", "kind": "claims_lookup", "pattern": "(보낼까요|접수할까요)",
+             "unless_tools": ["request_refund"], "nudge": "(시스템 안내)"}
+    said = "무선 이어폰 30000원 환불을 접수할까요? 내용은 '안녕하세요, 김민수 님."
+    llm = ScriptedLLM([[tool("verify_customer", order_id="A1001", phone_last4="1234"),
+                        tool("request_refund", order_id="A1001", reason="단순 변심")], [text(said)]])
+    engine = Engine(make_definition(guards=[guard]), MiniShop(), FakeRecorder(), llm, now=fixed_now)
+    events = await collect(engine, "A1001 환불해 주세요. 뒤 네 자리 1234")
+    assert not any(e.type == "replace" for e in events) and events[-1].text == said

@@ -1,0 +1,19 @@
+{
+  "agent_id": "office-assistant",
+  "version": 3,
+  "state": "tested",
+  "created_at": 1795158756.2656953,
+  "created_by": "claude",
+  "based_on": 2,
+  "note": "메일 보내기를 send_mail 한 번의 두 단계 변경으로(확인 → 동의 → 보냄). v2에서는 초안 뒤 모델이 스스로 '보낼까요?'를 묻다 막혔다",
+  "safety_change": true,
+  "changed_fields": [
+    "tools",
+    "flow",
+    "prohibitions",
+    "guards"
+  ],
+  "test_run_id": "office-assistant.v3.20261120-161552-0c11",
+  "approved_by": null,
+  "approved_at": null
+}
