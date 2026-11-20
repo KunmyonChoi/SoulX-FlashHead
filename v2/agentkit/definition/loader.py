@@ -17,7 +17,8 @@ from .errors import DefinitionError
 # file -> the top-level keys it holds (ARCHITECTURE.md section 3)
 FILES: dict[str, tuple[str, ...]] = {
     "agent.yaml": ("id", "version", "name", "description", "persona", "language", "reply_length",
-                   "live_clock", "llm", "voice", "avatar", "knowledge", "opening", "screen", "actions"),
+                   "live_clock", "llm", "voice", "avatar", "knowledge", "privacy", "opening", "screen",
+                   "actions"),
     "tools.yaml": ("tool_packs", "tools"),
     "flow.yaml": ("flow", "handoff", "prohibitions"),
     "guards.yaml": ("guards",),

@@ -1,0 +1,33 @@
+# 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
+name: find_free_time
+description: 구글 캘린더에서 하루 중 비는 시간을 찾는다. 약속이나 회의를 잡기 전에, 또는 '내일 한 시간 비는 때 있어?'처럼 물으면 쓴다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    date:
+      type: string
+      description: 날짜 YYYY-MM-DD
+    duration_min:
+      type: integer
+      description: 필요한 길이(분). 말하지 않았으면 30
+      default: 30
+    from:
+      type: string
+      description: 찾기 시작할 시각 HH:MM. 기본 09:00
+    to:
+      type: string
+      description: 찾기를 마칠 시각 HH:MM. 기본 18:00
+  required:
+  - date
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 10.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 빈 시간을 찾아볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.google:find_free_time

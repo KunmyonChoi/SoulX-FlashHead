@@ -27,6 +27,27 @@ LIVE_PAYLOAD_LIMIT = 4000         # characters of span input/output sent to live
 PURGE_EVERY_S = 6 * 3600.0
 
 
+def without_content(span: dict) -> dict:
+    """A span of a conversation whose content is not kept: what kind of step it was, how long, whether it
+    worked; not what went in or came out (mail, calendar entries, prompts, transcripts)."""
+    def size(value):
+        try:
+            import json as _json
+            return len(_json.dumps(value, ensure_ascii=False))
+        except Exception:
+            return 0
+    output = span.get("output")
+    summary = {"stored": False, "chars": size(output)}
+    if isinstance(output, dict):
+        for key in ("ok", "executed", "needs_confirmation", "error_type", "items", "ms"):
+            if key in output:
+                summary[key] = output[key]
+    attrs = {k: v for k, v in (span.get("attrs") or {}).items()
+             if isinstance(v, (int, float, bool)) or v is None or (isinstance(v, str) and len(v) <= 40 and " " not in v)}
+    return {**span, "input": {"stored": False, "chars": size(span.get("input"))} if span.get("input") else None,
+            "output": summary if output is not None else None, "attrs": attrs}
+
+
 class TraceRecorder:
     def __init__(self, store: TraceStore, max_queue: int = MAX_QUEUE, start: bool = True,
                  auto_purge: bool = True) -> None:
@@ -40,6 +61,7 @@ class TraceRecorder:
         self._idle = threading.Condition()
         self._pending = 0                 # items queued or being written
         self._audio_ok: dict[str, bool] = {}     # session -> may store audio (as far as this process knows)
+        self._content_ok: dict[str, bool] = {}   # session -> may store what was said and looked up
         self._audio_bytes = 0
         self._last_warning = 0.0
         self._next_purge = time.time() + 30.0
@@ -53,7 +75,11 @@ class TraceRecorder:
             data = meta.model_dump()
             if len(self._audio_ok) > 5000:       # sessions that were never ended
                 self._audio_ok.clear()
-            self._audio_ok[data["session_id"]] = bool(data.get("test") or data.get("simulated"))
+            content = data.get("store_content", True) is not False
+            if len(self._content_ok) > 5000:
+                self._content_ok.clear()
+            self._content_ok[data["session_id"]] = content
+            self._audio_ok[data["session_id"]] = content and bool(data.get("test") or data.get("simulated"))
             self._put(("session", data))
         except Exception as exc:
             self._warn("start_session", exc)
@@ -62,13 +88,20 @@ class TraceRecorder:
         try:
             # model_dump copies the containers, so later changes by the caller (a message list
             # that keeps growing) do not reach the stored record
-            self._put(("span", span.model_dump(), list(pii_paths) if pii_paths else None))
+            data = span.model_dump()
+            if self._content_ok.get(data["session_id"]) is False:
+                data = without_content(data)
+            self._put(("span", data, list(pii_paths) if pii_paths else None))
         except Exception as exc:
             self._warn("span", exc)
 
     def turn(self, turn: TurnRecord) -> None:
         try:
-            self._put(("turn", turn.model_dump()))
+            data = turn.model_dump()
+            if self._content_ok.get(data["session_id"]) is False:
+                for key in ("user_text", "agent_text"):
+                    data[key] = f"(내용 저장 안 함 · {len(data.get(key) or '')}자)" if data.get(key) else ""
+            self._put(("turn", data))
         except Exception as exc:
             self._warn("turn", exc)
 

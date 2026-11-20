@@ -24,7 +24,9 @@ FLIGHT = ["verify_booking", "get_booking", "search_alternative_flights", "quote_
 # ---- the contracts ----------------------------------------------------------------------
 
 
-PACKS = {"shop": SHOP[:4], "common": SHOP[4:], "lookup": V1, "cafe": CAFE, "web": WEB, "clinic": CLINIC, "burger": DRIVE, "airline": FLIGHT}
+GOOGLE = ["list_events", "find_free_time", "create_event", "mail_briefing", "search_mail", "read_mail", "create_draft", "send_draft"]
+PACKS = {"shop": SHOP[:4], "common": SHOP[4:], "lookup": V1, "cafe": CAFE, "web": WEB, "clinic": CLINIC, "burger": DRIVE, "airline": FLIGHT,
+         "google": GOOGLE}
 
 
 def test_all_contracts_load_and_are_complete():
@@ -336,7 +338,7 @@ def test_api_tools():
     app.include_router(router)
     client = TestClient(app)
     body = client.get("/api/tools").json()
-    assert body["errors"] == [] and [t["name"] for t in body["tools"]] == sorted(SHOP + V1 + CAFE + WEB + CLINIC + DRIVE + FLIGHT)
+    assert body["errors"] == [] and [t["name"] for t in body["tools"]] == sorted(SHOP + V1 + CAFE + WEB + CLINIC + DRIVE + FLIGHT + GOOGLE)
     assert {t["id"] for t in body["tools"]} >= {"cafe.search_menu", "burger.search_menu", "common.handoff_to_human"}
     by_name = {t["id"].split(".")[1] if t["pack"] != "burger" else t["id"]: t for t in body["tools"]}
     assert client.get("/api/tools/cafe.add_to_cart").json()["pack"] == "cafe"

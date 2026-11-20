@@ -61,7 +61,7 @@ def test_undeployed_agents_have_no_stable_version(store, agent):
 
 
 def test_anchor_matches_v1(store):
-    d = store.load("tech-trend-anchor")
+    d = store.load("tech-trend-anchor", 1)   # version 1 is the port of v1; later versions may differ
     assert d.tools == ["get_weather", "search_news", "get_news_detail", "search_geeknews", "read_geeknews",
                        "search_wikipedia", "list_knowledge_by_date"]
     assert d.knowledge.kind == "weknora" and d.knowledge.name == "Tech Trend"

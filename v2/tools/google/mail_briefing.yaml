@@ -1,0 +1,23 @@
+# 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
+name: mail_briefing
+description: Gmail 받은편지함에서 읽지 않은 메일을 정리해 알려 준다. 광고와 알림 메일은 빼고 센다. '새 메일 있어?', '메일 브리핑해 줘', '오늘 온 메일'처럼 물으면 쓴다. 결과의 번호로 read_mail을
+  부를 수 있다.
+effect: read
+input_schema:
+  type: object
+  properties:
+    hours:
+      type: integer
+      description: 몇 시간 안에 온 메일까지 볼지. 기본 24(오늘)
+      default: 24
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 10.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 메일함을 확인해 볼게요.
+adapter:
+  kind: python
+  target: agentkit.tools.google:mail_briefing

@@ -123,6 +123,7 @@ class Engine:
         self._safe(self.recorder.start_session, SessionMeta(
             session_id=self.session_id, agent_id=definition.id, version=definition.version, channel=channel,
             test=self.test, simulated=self.simulated, started_at=time.time(), label=label,
+            store_content=self.simulated or bool(getattr(getattr(definition, "privacy", None), "store_content", True)),
             settings={"model": definition.llm.model, "language": self.language or definition.language,
                       "reply_length": self.reply_length or definition.reply_length, **settings}))
 
@@ -308,7 +309,7 @@ class Engine:
             return ToolResult(ok=False, text=text, error_type="invalid_input"), text
         context = ToolContext(
             session_id=self.session_id, agent_id=self.definition.id, version=self.definition.version,
-            turn=state.number, language=language, test=self.test or self.simulated,
+            turn=state.number, language=language, test=self.test or self.simulated, simulated=self.simulated,
             # a notice is not the customer speaking: nothing in it can be read as consent
             last_user_text="" if getattr(state, "notice", False) else state.user_message["content"],
             speculative=state.speculative)

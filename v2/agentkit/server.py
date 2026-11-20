@@ -86,6 +86,9 @@ def create_app(engine_factory=None):
             sweeper.cancel()
 
     app = FastAPI(title="agentkit v2", lifespan=lifespan)
+    from agentkit import auth
+    app.add_middleware(auth.OwnerOnly)   # owner login, once a password is set (agentkit/auth.py)
+    auth.add_routes(app)
     app.state.mounted = []
     app.state.missing = {}
     app.state.sessions = {}          # session_id -> {"agent", "channel", "started_at"}; live conversations

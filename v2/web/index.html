@@ -117,7 +117,7 @@
     </select></label></div>
 </aside>
 
-<script src="/web/common.js?v=screen8"></script>
+<script src="/web/common.js?v=auth1"></script>
 <script>
 'use strict';
 const SR = 16000;
@@ -1145,7 +1145,11 @@ async function start() {
       + qs({ agent: $('agent').value, channel, version: $('version').value, test: test ? 1 : 0 }));
     ws.binaryType = 'arraybuffer';
     ws.onmessage = e => { chain = chain.then(() => onMessage(e.data)).catch(err => console.error(err)); };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      if (event && event.code === 4401) {   // the owner login ran out (agentkit/auth.py)
+        location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+        return;
+      }
       if (!running) return;
       stop(lastError ? lastError : cfg ? '연결이 끊어졌습니다. 다시 시작하려면 "대화 시작"을 누르세요.'
         : '서버에 연결할 수 없습니다. 서버가 켜져 있는지 확인한 뒤 다시 시작하세요.', true);

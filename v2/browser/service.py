@@ -30,6 +30,17 @@ IDLE = 300          # seconds a paused task waits for the user before it gives u
 # 6 s lets a plain lookup (about 5 s) answer in the same reply; with 4 s the agent said "I will let you know"
 # and then the answer one second later.
 WAIT = float(os.environ.get("BROWSER_WAIT", 6))
+def _service_header():
+    """The voice server asks programs on this machine for its service token once an owner login is set
+    (agentkit/auth.py). The token file is read each time, so it may be created after this service started."""
+    path = os.path.join(os.environ.get("AGENTKIT_SECRETS_DIR", os.path.expanduser("~/.agentkit")), "service.token")
+    try:
+        with open(path) as f:
+            return {"X-Agentkit-Service": f.read().strip()}
+    except OSError:
+        return {}
+
+
 AGENT_URLS = os.environ.get("AGENT_URLS", "http://127.0.0.1:7871,http://127.0.0.1:7872").split(",")
 MODEL = os.environ.get("BROWSER_MODEL", "gemma4:26b")
 SITE = os.environ.get("OFFICE_URL", "http://127.0.0.1:7890")
@@ -130,7 +141,7 @@ def notify(session_id, text):
     for base in AGENT_URLS:
         try:
             request = urllib.request.Request(f"{base.strip()}/api/sessions/{session_id}/notify", data=body,
-                                             headers={"Content-Type": "application/json"})
+                                             headers={"Content-Type": "application/json", **_service_header()})
             with urllib.request.urlopen(request, timeout=5) as response:
                 if response.status == 200:
                     return True

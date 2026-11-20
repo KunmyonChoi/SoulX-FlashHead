@@ -1,0 +1,77 @@
+"""Owner login (agentkit/auth.py): off until a password is set, then pages, APIs and the WebSocket need it."""
+import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+import runtime_fakes  # noqa: F401
+
+from agentkit import auth
+
+
+@pytest.fixture
+def app(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTKIT_SECRETS_DIR", str(tmp_path / "s"))
+    from fastapi import FastAPI, WebSocket
+    from fastapi.responses import HTMLResponse
+    app = FastAPI()
+    app.add_middleware(auth.OwnerOnly)
+    auth.add_routes(app)
+
+    @app.get("/api/health")
+    async def health():
+        return {"ok": True}
+
+    @app.get("/api/agents")
+    async def agents():
+        return []
+
+    @app.get("/monitor")
+    async def monitor():
+        return HTMLResponse("monitor")
+
+    @app.websocket("/ws")
+    async def ws(socket: WebSocket):
+        await socket.accept()
+        await socket.send_text("ready")
+        await socket.close()
+    return app
+
+
+def test_off_until_a_password_is_set(app):
+    client = TestClient(app)
+    assert client.get("/api/agents").status_code == 200
+    assert auth.owner_required() is not None
+
+
+def test_on_after_a_password_is_set(app):
+    auth.set_password("correct horse battery")
+    client = TestClient(app)
+    assert client.get("/api/health").status_code == 200                       # stays open
+    assert client.get("/api/agents").status_code == 401
+    page = client.get("/monitor?x=1", follow_redirects=False)
+    assert page.status_code == 303 and page.headers["location"] == "/login?next=%2Fmonitor%3Fx%3D1"
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws") as socket:
+            socket.receive_text()
+    assert client.post("/api/login", json={"password": "wrong password"}).status_code == 401
+    ok = client.post("/api/login", json={"password": "correct horse battery"})
+    assert ok.status_code == 200 and "httponly" in ok.headers["set-cookie"].lower() and "samesite=strict" in ok.headers["set-cookie"].lower()
+    assert client.get("/api/agents").status_code == 200
+    with client.websocket_connect("/ws") as socket:
+        assert socket.receive_text() == "ready"
+    assert auth.owner_required() is None
+
+
+def test_service_token_and_forged_or_expired_cookies(app):
+    auth.set_password("correct horse battery")
+    client = TestClient(app)
+    assert client.get("/api/agents", headers={"X-Agentkit-Service": auth.service_token()}).status_code == 200
+    assert client.get("/api/agents", headers={"X-Agentkit-Service": "guess"}).status_code == 401
+    assert client.get("/api/agents", cookies={auth.COOKIE: "9999999999.deadbeef"}).status_code == 401
+    assert not auth.cookie_ok(auth.make_cookie(now=0))                          # expired long ago
+    assert auth.cookie_ok(auth.make_cookie())
+
+
+def test_short_password_is_refused(app):
+    with pytest.raises(ValueError):
+        auth.set_password("short")

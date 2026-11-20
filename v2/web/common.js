@@ -56,6 +56,11 @@ async function api(path, options) {
   } finally {
     clearTimeout(timer);
   }
+  if (res.status === 401 && location.pathname !== '/login') {
+    // the owner login ran out (agentkit/auth.py): log in again and come back here
+    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+    throw new ApiError('login', 401, '로그인이 필요합니다');
+  }
   let body = null;
   const text = await res.text().catch(() => '');
   if (text) { try { body = JSON.parse(text); } catch (err) { body = text; } }

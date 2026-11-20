@@ -55,6 +55,14 @@ class KnowledgeSettings(BaseModel):
     mode: Literal["before_reply", "tool"] = "before_reply"
 
 
+class PrivacySettings(BaseModel):
+    """What the records keep of a conversation with real people (simulated ones are always kept in full).
+    store_content false: turn texts, tool arguments and results, model prompts and audio are not stored;
+    only what was done (tool names, timings, success) remains. For agents that read the user's own mail,
+    calendar or accounts."""
+    store_content: bool = True
+
+
 class FlowRule(BaseModel):
     id: str
     rule: str                       # one sentence the agent must follow, in the agent's language
@@ -185,6 +193,7 @@ class AgentDefinition(BaseModel):
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     avatar: AvatarSettings = Field(default_factory=AvatarSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
+    privacy: PrivacySettings = Field(default_factory=PrivacySettings)
     tools: list[str] = Field(default_factory=list)       # names of tool contracts
     # the packs those names are looked up in, e.g. ["burger", "common"]: two systems may both have a
     # "search_menu", and an agent means the one of its own packs. Empty: every pack, and a name that
@@ -203,7 +212,7 @@ class AgentDefinition(BaseModel):
 
 
 # Parts of a definition whose change the builder must flag as a safety change (R-BLD-5).
-SAFETY_FIELDS = ("tools", "tool_packs", "handoff", "prohibitions", "guards")
+SAFETY_FIELDS = ("tools", "tool_packs", "handoff", "prohibitions", "guards", "privacy")
 # ...plus any SuccessCriterion with safety=True, and ExtractField.pii.
 
 # ================================================================================================
@@ -298,6 +307,7 @@ class ToolContext(BaseModel):
     turn: int                                 # index of the current user turn, starting at 1
     language: Literal["ko", "en"] = "ko"
     test: bool = False                        # test or simulated session: adapters must not touch real systems
+    simulated: bool = False                   # the customer is a simulated persona (a test run): never real accounts
     last_user_text: str = ""                  # the customer's latest utterance (consent is read from it)
     speculative: bool = False                 # the turn is not final yet: write tools must refuse
 
@@ -380,6 +390,7 @@ class SessionMeta(BaseModel):
     started_at: float             # epoch seconds
     settings: dict[str, Any] = Field(default_factory=dict)
     label: str = ""               # e.g. the persona or test case id
+    store_content: bool = True    # false: only what was done is kept (definition.privacy, real conversations)
 
 
 class Span(BaseModel):
