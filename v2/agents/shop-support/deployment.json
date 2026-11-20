@@ -1,8 +1,8 @@
 {
   "agent_id": "shop-support",
-  "stable": 1,
+  "stable": 2,
   "canary": null,
   "canary_percent": 0,
-  "previous_stable": null,
-  "updated_at": 1794905832.67
+  "previous_stable": 1,
+  "updated_at": 1795150423.3993113
 }
