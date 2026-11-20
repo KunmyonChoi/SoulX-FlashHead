@@ -53,6 +53,13 @@ def _is_empty_wait(text: str) -> bool:
     return is_empty_wait(text)
 
 
+WITHHELD = "(내용 저장 안 함"     # what the recorder stores instead of a text (definition.privacy, trace/recorder.py)
+
+
+def withheld(text) -> bool:
+    return str(text or "").startswith(WITHHELD)
+
+
 def auto_signals(turns: Iterable[dict], spans: Iterable[dict]) -> dict[int, list[str]]:
     """{turn number: [signal, ...]} for every turn given (an empty list when nothing is suspected).
 
@@ -75,6 +82,11 @@ def auto_signals(turns: Iterable[dict], spans: Iterable[dict]) -> dict[int, list
         found = []
         if number in low:
             found.append("low_confidence")
+        if withheld(user) or withheld(agent):
+            # the text was not kept: "(내용 저장 안 함 · 10자)" twice is not the customer repeating himself
+            out[number] = found
+            previous = None
+            continue
         if previous is not None and similar(user, previous):
             found.append("repeat")
         if REASK.search(agent):

@@ -562,7 +562,8 @@ class VoiceSession:
             await asyncio.wait({task}, timeout=1.0)  # the cancelled turn must be out of the engine first
         interrupted_id, heard = self.apply_playback(seq, offset)
         if heard is not None:
-            logger.info("Interrupted reply cut to what was heard: %r", heard)
+            loggable = getattr(self.engine, "_loggable", None)
+            logger.info("Interrupted reply cut to what was heard: %r", loggable(heard) if loggable else heard)
             try:
                 self.engine.truncate_last_reply(heard)
             except Exception as e:

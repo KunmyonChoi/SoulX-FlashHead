@@ -343,7 +343,7 @@ class Engine:
             say = next((rule.say for rule in self.definition.handoff if rule.id == rule_id and rule.say), "")
             text = (text + "\n" if text else "") + (line("handoff_done_say", language, text=say) if say
                                                     else line("handoff_done", language))
-        logger.info(f"[{self.session_id}] tool {name}({arguments}) -> ok={result.ok} executed={result.executed} "
+        logger.info(f"[{self.session_id}] tool {name}({self._loggable(arguments)}) -> ok={result.ok} executed={result.executed} "
                     f"confirm={result.needs_confirmation} error={result.error_type} in {result.ms:.0f} ms")
         return result, text
 
@@ -732,7 +732,7 @@ class Engine:
                                 action = "regenerated" if again else "dropped"
                                 self._span(state, "guard", time.time(), name=guard.id, input={"sentence": sentence.strip()},
                                            attrs={"guard_id": guard.id, "action": action})
-                                logger.info(f"[{self.session_id}] guard {guard.id} ({action}): {sentence.strip()!r}")
+                                logger.info(f"[{self.session_id}] guard {guard.id} ({action}): {self._loggable(sentence.strip())!r}")
                                 yield ReplyEvent(type="replace", text=reply["content"],
                                                  data={"guard_id": guard.id, "action": action})
                                 if again:
@@ -785,7 +785,7 @@ class Engine:
                     action = "regenerated" if again else "dropped"
                     self._span(state, "guard", time.time(), name=guard.id, input={"sentence": sentence.strip()},
                                attrs={"guard_id": guard.id, "action": action})
-                    logger.info(f"[{self.session_id}] guard {guard.id} ({action}): {sentence.strip()!r}")
+                    logger.info(f"[{self.session_id}] guard {guard.id} ({action}): {self._loggable(sentence.strip())!r}")
                     yield ReplyEvent(type="replace", text=reply["content"], data={"guard_id": guard.id, "action": action})
                     if again:
                         regenerated = True
@@ -804,7 +804,7 @@ class Engine:
                     self._span(state, "guard", time.time(), name=guard.id,
                                input={"sentence": reply["content"].strip()[-200:]},
                                attrs={"guard_id": guard.id, "action": "continued"})
-                    logger.info(f"[{self.session_id}] guard {guard.id} (continued): {reply['content'].strip()[-80:]!r}")
+                    logger.info(f"[{self.session_id}] guard {guard.id} (continued): {self._loggable(reply['content'].strip()[-80:])!r}")
                     if buffer.strip():
                         spoken = speakable(buffer)
                         if spoken:
@@ -1000,6 +1000,16 @@ class Engine:
                 yield event
         finally:
             await events.aclose()
+
+    def _loggable(self, value):
+        """What the server log may show of a text or of tool arguments. With definition.privacy.store_content
+        false (a real conversation), the log keeps no content either: argument names and lengths only."""
+        private = not self.simulated and not getattr(getattr(self.definition, "privacy", None), "store_content", True)
+        if not private:
+            return value
+        if isinstance(value, dict):
+            return {k: f"<{len(str(v))}자>" for k, v in value.items()}
+        return f"<{len(str(value or ''))}자>"
 
     def _guard_tools(self, state, calls):
         """(done, asked): the tools a guard may take as having happened.

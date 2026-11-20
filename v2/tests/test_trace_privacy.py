@@ -42,3 +42,23 @@ def test_simulated_and_default_sessions_keep_everything(tmp_path):
     rec.start_session(SessionMeta(session_id="d", agent_id="shop", version=1, channel="text", started_at=1.0))
     rec.turn(TurnRecord(session_id="d", turn=1, user_text="환불해 주세요", agent_text="네", t_user_end=1.0))
     assert next(i[1] for i in rec._queue.queue if i[0] == "turn")["user_text"] == "환불해 주세요"
+
+
+def test_withheld_turns_get_no_text_flags():
+    from agentkit.trace.flags import auto_signals
+    turns = [{"turn": n, "user_text": "(내용 저장 안 함 · 10자)", "agent_text": "(내용 저장 안 함 · 40자)"} for n in (1, 2, 3)]
+    spans = [{"turn": 2, "kind": "stt", "attrs": {"low_confidence": True}}]
+    assert auto_signals(turns, spans) == {1: [], 2: ["low_confidence"], 3: []}
+
+
+async def test_private_engine_logs_no_content(caplog):
+    import logging
+    from agentkit.runtime import Engine
+    from runtime_fakes import FakeGateway, FakeRecorder, ScriptedLLM, collect, contract, fixed_now, make_definition, text, tool
+    gateway = FakeGateway([contract("search_mail", properties={"query": {"type": "string"}}, required=["query"])])
+    definition = make_definition(tools=["search_mail"], privacy={"store_content": False})
+    engine = Engine(definition, gateway, FakeRecorder(), ScriptedLLM([[tool("search_mail", query="김민수 계약서")], [text("찾았어요.")]]),
+                    now=fixed_now)
+    with caplog.at_level(logging.INFO, logger="agentkit.runtime"):
+        await collect(engine, "김민수 계약서 메일 찾아줘")
+    assert "search_mail" in caplog.text and "김민수" not in caplog.text and "<7자>" in caplog.text

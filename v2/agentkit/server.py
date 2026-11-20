@@ -60,6 +60,15 @@ async def _analyze(session_id, app=None):
                 await loop.run_in_executor(None, flush)   # the analysis reads what was stored
         except ImportError:
             pass
+        try:
+            from agentkit.trace import get_store as trace_store
+            from agentkit.trace.flags import withheld
+            detail = trace_store().get_session(session_id) or {}
+            if any(withheld(t.get("user_text")) for t in detail.get("turns") or []):
+                logger.info(f"[{session_id}] analysis skipped: the conversation's content was not kept")
+                return       # a judge reading "(내용 저장 안 함 · 10자)" would only make things up
+        except ImportError:
+            pass
         if inspect.iscoroutinefunction(analyze_session):
             await analyze_session(session_id)
         else:
