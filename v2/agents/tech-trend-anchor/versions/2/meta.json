@@ -1,7 +1,7 @@
 {
   "agent_id": "tech-trend-anchor",
   "version": 2,
-  "state": "tested",
+  "state": "deployed",
   "created_at": 1795153192.6068609,
   "created_by": "claude",
   "based_on": 1,
@@ -12,6 +12,6 @@
     "tools"
   ],
   "test_run_id": "tech-trend-anchor.v2.20261120-150302-7ef3",
-  "approved_by": null,
-  "approved_at": null
+  "approved_by": "kunmyon (Claude가 사용자 지시로 처리)",
+  "approved_at": 1795155269.104886
 }
