@@ -1,0 +1,26 @@
+{
+  "agent_id": "office-assistant",
+  "version": 2,
+  "state": "draft",
+  "created_at": 1795157869.3049397,
+  "created_by": "claude",
+  "based_on": 1,
+  "note": "업무 비서 v2: 구글 캘린더·Gmail 도구(google 묶음)로 전환, 메일·일정 내용은 기록하지 않음(privacy)",
+  "safety_change": true,
+  "changed_fields": [
+    "description",
+    "persona",
+    "privacy",
+    "tools",
+    "tool_packs",
+    "flow",
+    "prohibitions",
+    "guards",
+    "evaluation.success",
+    "evaluation.extract",
+    "tests.personas"
+  ],
+  "test_run_id": null,
+  "approved_by": null,
+  "approved_at": null
+}

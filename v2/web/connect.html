@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>계정 연결 · 음성 에이전트</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/web/app.css?v=screen7">
+<style>
+  .connect { max-width: 760px; margin: 24px auto; padding: 0 16px; display: grid; gap: 16px; }
+  .step { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
+  .step .num { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 600;
+               border: 1px solid var(--line, #3a4150); }
+  .step.done .num { background: var(--ok, #2f9e74); border-color: transparent; color: #fff; }
+  .step h2 { font-size: 16px; margin: 4px 0 6px; }
+  .step p { margin: 4px 0; font-size: 14px; }
+  .step code { font-size: 13px; }
+  .state-line { font-size: 14px; margin: 6px 0; }
+  .row-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  #result { font-size: 14px; }
+</style>
+</head>
+<body class="page-connect">
+<header class="bar">
+  <div class="brand">음성 에이전트</div>
+  <nav class="nav" id="nav" aria-label="화면"></nav>
+</header>
+
+<main class="connect">
+  <section class="panel">
+    <header><h2>업무 비서의 계정 연결</h2></header>
+    <p class="muted" style="font-size:14px">비밀번호는 이 화면에 입력하지 않습니다. Google 로그인은 Google의 화면에서 하고, 여기에는 그 결과로 받은
+      접근 열쇠만 암호화해 보관합니다. 시험 대화의 가상 고객은 언제나 가짜 Google을 씁니다.</p>
+  </section>
+
+  <section class="panel step" id="step-owner">
+    <div class="num">1</div>
+    <div>
+      <h2>서버 소유자 로그인</h2>
+      <p class="state-line" id="owner-state">확인하는 중…</p>
+      <p>계정을 연결하면 이 서버에 들어오는 사람은 그 계정을 쓸 수 있게 되므로, 먼저 소유자 비밀번호를 정합니다. 서버에서 한 번 실행하세요:</p>
+      <p><code>cd v2 &amp;&amp; python -m agentkit.auth set-password</code></p>
+    </div>
+  </section>
+
+  <section class="panel step" id="step-client">
+    <div class="num">2</div>
+    <div>
+      <h2>OAuth 클라이언트 파일 올리기</h2>
+      <p class="state-line" id="client-state">확인하는 중…</p>
+      <p>Google Cloud Console에서 Calendar API와 Gmail API를 켜고, <b>데스크톱 앱</b> 유형의 OAuth 클라이언트를 만든 뒤 내려받은
+        <code>client_secret_….json</code>을 고르세요. 파일 내용은 암호화해 보관합니다.</p>
+      <div class="row-actions"><input type="file" id="client-file" accept="application/json,.json" aria-label="클라이언트 파일"></div>
+    </div>
+  </section>
+
+  <section class="panel step" id="step-google">
+    <div class="num">3</div>
+    <div>
+      <h2>Google 연결</h2>
+      <p class="state-line" id="google-state">확인하는 중…</p>
+      <p>Google 화면에서 계정을 고르고 권한(일정 보기·변경, 메일 읽기·초안·보내기)을 허용합니다. "확인되지 않은 앱" 안내가 나오면
+        본인이 만든 앱이므로 <b>고급 → 계속</b>을 누르면 됩니다. 이 페이지가 <code>http://localhost</code> 주소로 열려 있어야 합니다.</p>
+      <div class="row-actions">
+        <button id="connect-google" type="button">Google 연결</button>
+        <button id="disconnect-google" type="button" class="danger" hidden>연결 끊기</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="result" role="status"></div>
+</main>
+
+<script src="/web/common.js?v=auth1"></script>
+<script>
+mountNav('connect');
+
+function mark(id, done) { $(id).classList.toggle('done', !!done); }
+
+async function refresh() {
+  let s;
+  try { s = await api('/api/connect'); } catch (err) { $('result').textContent = '상태를 받지 못했습니다: ' + err.message; return; }
+  mark('step-owner', s.owner_login);
+  $('owner-state').textContent = s.owner_login ? '켜져 있습니다.' : '아직 소유자 비밀번호가 없습니다. 아래 명령으로 정한 뒤 이 화면을 새로 고치세요.';
+  mark('step-client', s.google.client);
+  $('client-state').textContent = s.google.client ? '올려 두었습니다. 바꾸려면 새 파일을 고르세요.' : '아직 없습니다.';
+  $('client-file').disabled = !s.owner_login;
+  mark('step-google', s.google.connected);
+  $('google-state').textContent = s.google.connected
+    ? '연결됨: ' + (s.google.account || '계정') + (s.google.connected_at ? ' · ' + new Date(s.google.connected_at * 1000).toLocaleString('ko-KR') : '')
+    : '연결되어 있지 않습니다.';
+  $('connect-google').disabled = !(s.owner_login && s.google.client);
+  $('connect-google').textContent = s.google.connected ? '다시 연결' : 'Google 연결';
+  $('disconnect-google').hidden = !s.google.connected;
+}
+
+$('client-file').onchange = async () => {
+  const file = $('client-file').files[0];
+  if (!file) return;
+  let raw;
+  try { raw = JSON.parse(await file.text()); } catch (err) { $('result').textContent = 'JSON 파일이 아닙니다.'; return; }
+  try { await api('/api/connect/google/client', { method: 'POST', body: raw }); $('result').textContent = '클라이언트를 저장했습니다. 내려받은 파일은 지워도 됩니다.'; }
+  catch (err) { $('result').textContent = '저장하지 못했습니다: ' + err.message; }
+  $('client-file').value = '';
+  refresh();
+};
+
+$('connect-google').onclick = async () => {
+  try { const r = await api('/api/connect/google/start'); location.href = r.url; }
+  catch (err) { $('result').textContent = '시작하지 못했습니다: ' + err.message; }
+};
+
+$('disconnect-google').onclick = async () => {
+  if (!confirm('Google 연결을 끊을까요? 보관한 접근 열쇠를 지우고 Google에도 취소를 요청합니다.')) return;
+  try { const r = await api('/api/connect/google/disconnect', { method: 'POST' });
+        $('result').textContent = r.revoked ? '연결을 끊었습니다.' : '연결을 끊었습니다 (Google 쪽 취소는 확인하지 못했습니다. Google 계정 설정에서도 지워 주세요).'; }
+  catch (err) { $('result').textContent = '끊지 못했습니다: ' + err.message; }
+  refresh();
+};
+
+refresh();
+</script>
+</body>
+</html>

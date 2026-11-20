@@ -23,8 +23,8 @@ from . import config
 logger = logging.getLogger("agentkit.server")
 
 ROUTER_MODULES = ("agentkit.definition.api", "agentkit.tools.api", "agentkit.trace.api",
-                  "agentkit.eval.api", "agentkit.builder.api")
-PAGES = {"/": "index.html", "/monitor": "monitor.html", "/studio": "studio.html"}
+                  "agentkit.eval.api", "agentkit.builder.api", "agentkit.google_connect")
+PAGES = {"/": "index.html", "/monitor": "monitor.html", "/studio": "studio.html", "/connect": "connect.html"}
 CHANNELS = ("text", "voice", "avatar")
 OPENING_ID = "opening"   # the message id of the agent's opening words and screens
 

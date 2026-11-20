@@ -1,0 +1,21 @@
+guards:
+- id: no_fake_done
+  kind: claims_lookup
+  pattern: (등록(했|됐|되었|해\s?드렸|을\s?완료)|보냈(어요|습니다)|전송(했|됐|되었)|발송(했|됐|되었))
+  unless_tools:
+  - create_event
+  - send_draft
+  nudge: '(시스템 안내: 실행되지 않았는데 등록했거나 보냈다고 말하려 했습니다. 사용자가 동의했다면 지금 도구를 같은 인자로 다시 부르고, 아니라면 처리되었다는 말을 하지 마세요.)'
+- id: confirm_through_tool
+  kind: claims_lookup
+  pattern: (보낼까요|보내\s?드릴까요|등록할까요|등록해\s?드릴까요|잡아\s?드릴까요|이대로\s?(보낼|등록|할)까요)
+  unless_tools:
+  - create_event
+  - send_draft
+  nudge: '(시스템 안내: 실행 전 확인을 직접 물으려 했습니다. 확인 문장은 도구가 만듭니다. 일정이면 create_event를, 메일이면 send_draft를 지금 부르고
+    받은 확인 문장을 그대로 읽으세요.)'
+- id: no_spoken_password
+  kind: regex
+  pattern: (비밀\s?번호|인증\s?번호)\S{0,2}\s?(알려|말씀|불러)
+  unless_tools: []
+  nudge: '(시스템 안내: 비밀번호나 인증 번호를 말로 묻지 마세요.)'

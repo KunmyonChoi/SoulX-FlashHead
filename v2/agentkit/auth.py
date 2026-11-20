@@ -29,7 +29,10 @@ from .secrets import DEFAULT_DIR, _write_private
 
 COOKIE = "agentkit_session"
 SESSION_S = 7 * 24 * 3600
-OPEN_PATHS = {"/login", "/api/login", "/api/logout", "/api/health", "/web/app.css", "/favicon.ico"}
+# /oauth/google/callback: Google's redirect carries no SameSite=Strict cookie; it is checked by its one-time
+# state instead (agentkit/google_connect.py)
+OPEN_PATHS = {"/login", "/api/login", "/api/logout", "/api/health", "/web/app.css", "/favicon.ico",
+              "/oauth/google/callback"}
 SERVICE_HEADER = "x-agentkit-service"
 
 

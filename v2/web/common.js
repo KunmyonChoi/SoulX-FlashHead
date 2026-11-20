@@ -240,7 +240,7 @@ function fillAgentSelect(select, agents, chosen, withAll, registered) {
 function mountNav(here) {
   const nav = $('nav');
   if (!nav) return;
-  [['talk', '/', '대화'], ['monitor', '/monitor', '모니터'], ['studio', '/studio', '제작실']].forEach(([key, href, label]) => {
+  [['talk', '/', '대화'], ['monitor', '/monitor', '모니터'], ['studio', '/studio', '제작실'], ['connect', '/connect', '계정 연결']].forEach(([key, href, label]) => {
     nav.append(el('a', { href, 'aria-current': key === here ? 'page' : null }, label));
   });
 }
