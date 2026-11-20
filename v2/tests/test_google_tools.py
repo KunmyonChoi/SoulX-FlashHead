@@ -170,3 +170,35 @@ async def test_real_backend_retries_a_rate_limit_and_does_not_call_it_a_missing_
     real_sleep = google.asyncio.sleep
     monkeypatch.setattr(google.asyncio, "sleep", lambda seconds: real_sleep(0))
     assert await google.RealGoogle(store)._ids("in:inbox", 10) == ["x"]
+
+
+async def test_send_waits_and_can_be_cancelled_in_time(gateway, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(google, "SEND_DELAY", 0.3)
+    s = "g8"
+    await gateway.call(ctx(1, session=s), "google.mail_briefing", {})
+    args = {"reply_to": "1", "body": "잘 받았습니다."}
+    await gateway.call(ctx(2, session=s), "google.send_mail", args)
+    sent = await gateway.call(ctx(3, "보내", session=s), "google.send_mail", args)
+    pending = sent.display[0]["data"]
+    assert sent.executed and sent.display[0]["kind"] == "send_pending" and pending["state"] == "waiting" and "뒤에 보냅니다" in sent.text
+    fake = google._fakes.of(ctx(session=s))
+    stop = await gateway.call(ctx(4, session=s), "google.cancel_send", {})
+    assert stop.executed and stop.display[0]["data"]["state"] == "cancelled" and "임시보관함" in stop.text
+    await asyncio.sleep(0.5)
+    assert fake.sent == [] and len(fake.drafts) == 1                       # never sent, the draft kept
+
+
+async def test_send_goes_out_after_the_wait_and_cannot_be_cancelled_then(gateway, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(google, "SEND_DELAY", 0.1)
+    s = "g9"
+    await gateway.call(ctx(1, session=s), "google.mail_briefing", {})
+    args = {"reply_to": "2", "body": "4시 괜찮습니다."}
+    await gateway.call(ctx(2, session=s), "google.send_mail", args)
+    await gateway.call(ctx(3, "응 보내", session=s), "google.send_mail", args)
+    await asyncio.sleep(0.4)
+    fake = google._fakes.of(ctx(session=s))
+    assert len(fake.sent) == 1 and fake.sent[0]["subject"].startswith("Re: 내일 회의")
+    late = await gateway.call(ctx(4, session=s), "google.cancel_send", {"send_id": "s1"})
+    assert not late.executed and "이미 보냈습니다" in late.text

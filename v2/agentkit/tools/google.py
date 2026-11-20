@@ -729,19 +729,73 @@ async def preview_send_mail(arguments, ctx):
     return ok("", {"sentence": f"{_display(to)}에게 '{subject}' 메일을 보낼까요? 내용은 '{_gist(body)}'입니다."})
 
 
+# ---- undo send: a consented mail goes out SEND_DELAY seconds later; cancel_send stops it ---------------------
+# The draft is saved at once, so a cancelled mail (or one caught by a server restart inside the delay) stays in
+# Drafts and nothing written is lost. A restart inside the delay means that mail is not sent.
+SEND_DELAY = float(os.environ.get("AGENTKIT_SEND_DELAY", "10"))
+_sends = PerSession(dict)       # per conversation: send id -> {"task", "draft_id", "to", "subject", "state", "send_at"}
+
+
+def _pending_view(send_id, item):
+    return {"send_id": send_id, "to": _display(item["to"]), "subject": item["subject"], "state": item["state"],
+            "send_at": item["send_at"], "delay_s": SEND_DELAY}
+
+
+async def _send_later(google, item):
+    try:
+        await asyncio.sleep(max(0.0, item["send_at"] - time.time()))
+        if item["state"] != "waiting":
+            return
+        item["state"] = "sending"
+        await google.send_draft(item["draft_id"])
+        item["state"] = "sent"
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:                  # the draft stays; nobody to tell but the log
+        item["state"] = "failed"
+        import logging
+        logging.getLogger("agentkit.tools").warning(f"Scheduled send failed: {type(e).__name__}")
+
+
+async def _schedule(ctx, google, draft, to, subject):
+    sends = _sends.of(ctx)
+    send_id = f"s{len(sends) + 1}"
+    item = {"draft_id": draft["id"], "to": to, "subject": subject, "state": "waiting", "send_at": time.time() + SEND_DELAY}
+    item["task"] = asyncio.get_running_loop().create_task(_send_later(google, item))
+    sends[send_id] = item
+    seconds = int(round(SEND_DELAY))
+    return ok(f"{_display(to)}에게 '{subject}' 메일을 {seconds}초 뒤에 보냅니다. 그 안에 사용자가 취소하라고 하면 cancel_send를 부르세요. "
+              f"사용자에게는 보낸다고 말하고, {seconds}초 안에 취소할 수 있다고 짧게 덧붙이세요.",
+              {"pending": _pending_view(send_id, item)}, executed=True)
+
+
 async def send_mail(arguments, ctx):
     """Writes the mail and sends it: the second phase of one two-phase write (the first only read it out)."""
     google, to, subject, body, reply_to = await _mail_request(arguments, ctx)
     draft = await google.create_draft(to, subject, body, reply_to)
-    await google.send_draft(draft["id"])
-    return ok(f"{_display(to)}에게 '{subject}' 메일을 보냈습니다.", {"sent": True}, executed=True)
+    return await _schedule(ctx, google, draft, to, subject)
+
+
+async def cancel_send(arguments, ctx):
+    sends = _sends.of(ctx)
+    send_id = str(arguments.get("send_id") or "") or next((k for k in reversed(list(sends)) if sends[k]["state"] == "waiting"), "")
+    item = sends.get(send_id)
+    if not item:
+        raise ToolFailure("not_found", "취소할 보내기가 없습니다.")
+    if item["state"] == "waiting":
+        item["state"] = "cancelled"
+        item["task"].cancel()
+        return ok(f"보내지 않았습니다. '{item['subject']}' 메일은 임시보관함에 남겨 두었습니다.", {"pending": _pending_view(send_id, item)},
+                  executed=True, repeatable=True)
+    said = {"cancelled": "이미 취소했습니다.", "sent": "이미 보냈습니다. 보낸 메일은 되돌릴 수 없습니다.",
+            "sending": "지금 보내는 중이라 멈출 수 없습니다.", "failed": "보내지 못했습니다. 메일은 임시보관함에 있습니다."}[item["state"]]
+    return ok(said, {"pending": _pending_view(send_id, item)}, executed=False, repeatable=True)
 
 
 async def send_draft(arguments, ctx):
     google = backend(ctx)
     draft = await google.get_draft(str(arguments.get("draft_id") or ""))
-    await google.send_draft(draft["id"])
-    return ok(f"{_display(draft['to'])}에게 '{draft['subject']}' 메일을 보냈습니다.", {"sent": True}, executed=True)
+    return await _schedule(ctx, google, draft, draft["to"], draft["subject"])
 
 
 # ---- the mailbox screen: list, clean up (plan -> consent -> report), undo ----------------------------

@@ -239,7 +239,7 @@ class AdapterSpec(BaseModel):
 
 
 DisplayKind = Literal["menu", "items", "cart", "confirm", "receipt", "notice",
-                      "mail_list", "cleanup_report"]   # the last two: the office assistant screen (web/office.html)
+                      "mail_list", "cleanup_report", "send_pending"]   # the last two: the office assistant screen (web/office.html)
 
 
 class DisplaySpec(BaseModel):
