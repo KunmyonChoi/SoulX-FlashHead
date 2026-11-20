@@ -1,8 +1,8 @@
 {
   "agent_id": "office-assistant",
-  "stable": 4,
+  "stable": 7,
   "canary": null,
   "canary_percent": 0,
-  "previous_stable": null,
-  "updated_at": 1795172017.969101
+  "previous_stable": 4,
+  "updated_at": 1795184187.1051357
 }
