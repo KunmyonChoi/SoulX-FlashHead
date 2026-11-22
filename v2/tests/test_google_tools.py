@@ -93,7 +93,7 @@ async def test_real_backend_request_shapes(tmp_path, monkeypatch):
 async def test_list_mail_filters_counts_and_marks(gateway):
     listed = await gateway.call(ctx(1, session="g5"), "google.list_mail", {"filter": "unread"})
     data = listed.display[0]["data"]
-    assert listed.display[0]["kind"] == "mail_list" and data["counts"] == {"unread": 3, "ads": 2, "all": 7, "reply": 2}
+    assert listed.display[0]["kind"] == "mail_list" and data["counts"] == {"unread": 3, "ads": 3, "all": 7, "reply": 2}
     assert [(r["ref"], r["from"], r["marks"]) for r in data["rows"]] == [
         (1, "김민수", ["reply", "attachment"]), (2, "이서연", ["reply"]), (3, "보안팀", ["risk"])]
     assert "[메일 목록 시작" in listed.text
@@ -107,15 +107,15 @@ async def test_cleanup_is_planned_then_run_with_consent_then_undone(gateway):
     plan = await gateway.call(ctx(2, session=s), "google.cleanup_mail", {"spam": "1", "archive": "2"})
     assert plan.needs_confirmation and not plan.executed and "보관 1통, 스팸으로 이동 1통" in plan.confirmation_text
     fake = google._fakes.of(ctx(session=s))
-    assert await fake.counts() == {"unread": 3, "ads": 2, "all": 7}                    # nothing changed yet
+    assert await fake.counts() == {"unread": 3, "ads": 3, "all": 7}                    # nothing changed yet (GitHub is a notice)
     done = await gateway.call(ctx(3, "응, 정리해", session=s), "google.cleanup_mail", {"spam": "1", "archive": "2"})
     report = done.display[0]["data"]
     assert done.executed and done.display[0]["kind"] == "cleanup_report" and report["done"] == 2
-    assert "보관 1통, 스팸 1통" in done.text and await fake.counts() == {"unread": 3, "ads": 0, "all": 5}
+    assert "보관 1통, 스팸 1통" in done.text and await fake.counts() == {"unread": 3, "ads": 1, "all": 5}
     undo = await gateway.call(ctx(4, session=s), "google.undo_cleanup", {"report_id": report["report_id"], "refs": "1"})
-    assert undo.executed and undo.display[0]["data"]["undone"] == 1 and await fake.counts() == {"unread": 3, "ads": 1, "all": 6}
+    assert undo.executed and undo.display[0]["data"]["undone"] == 1 and await fake.counts() == {"unread": 3, "ads": 2, "all": 6}
     rest = await gateway.call(ctx(5, session=s), "google.undo_cleanup", {})
-    assert rest.display[0]["data"]["undone"] == 2 and await fake.counts() == {"unread": 3, "ads": 2, "all": 7}
+    assert rest.display[0]["data"]["undone"] == 2 and await fake.counts() == {"unread": 3, "ads": 3, "all": 7}
     again = await gateway.call(ctx(6, session=s), "google.undo_cleanup", {})
     assert not again.executed and "이미 모두" in again.text
 
@@ -337,10 +337,38 @@ async def test_lists_come_with_a_summary_that_can_be_said_without_the_screen(gat
     assert summary.index("의심") < summary.index("답장이 필요해 보이는 메일: 1번 김민수")       # the risk first
     assert "화면을 보지 않아도" in unread.text and "세 통씩" in unread.text
     ads = await gateway.call(ctx(2, session="g20"), "google.list_mail", {"filter": "ads"})
-    assert "[말할 요약] 광고·알림 메일 2통. 보낸 곳: 쿠팡, 무신사." in ads.text
+    assert "[말할 요약] 광고·알림 메일 3통. 보낸 곳: 쿠팡, 무신사 등." in ads.text
     found = await gateway.call(ctx(3, session="g20"), "google.search_mail", {"query": "김민수"})
     assert "[말할 요약] '김민수'로 찾은 메일 1통" in found.text
 
 
 def test_long_subjects_are_shortened_for_speech():
     assert google._topic("Re: RE: [광고] 아주 긴 제목이 여기 있어서 말로 하기에는 너무 깁니다 정말로") == "아주 긴 제목이 여기 있어서 말로 하기에는…"
+
+
+def test_mail_numbers_said_as_korean_words():
+    for said, number in {"4": "4", "4번": "4", "사번": "4", "사 번": "4", "오번": "5", "십이번": "12", "이십삼": "23",
+                         "십번": "10", "구번째": "9"}.items():
+        assert google.ref_number(said) == number, said
+    for said in ["이번 주", "사번 알려줘", "", "메일"]:
+        assert google.ref_number(said) == "", said
+
+
+async def test_read_mail_and_cleanup_take_spoken_numbers(gateway):
+    s = "g21"
+    await gateway.call(ctx(1, session=s), "google.list_mail", {"filter": "all"})
+    opened = await gateway.call(ctx(2, session=s), "google.read_mail", {"ref": "사번"})
+    assert opened.ok and "보안팀" in opened.text
+    plan = await gateway.call(ctx(3, session=s), "google.cleanup_mail", {"trash": "사번, 육번"})
+    assert plan.needs_confirmation and "2통" in plan.confirmation_text
+
+
+async def test_unread_leaves_ads_and_notices_aside_and_says_so(gateway):
+    listed = await gateway.call(ctx(1, session="g22"), "google.list_mail", {"filter": "unread"})
+    assert [r["from"] for r in listed.display[0]["data"]["rows"]] == ["김민수", "이서연", "보안팀"]
+    assert "광고·알림 3통은 따로 모아 둠" in listed.text
+    assert listed.display[0]["data"]["spoken"].endswith("광고·알림 3통은 따로 모아 두었어요.")
+    assert listed.display[0]["data"]["shown"] == "화면에 띄워 두었어요."
+    ads = await gateway.call(ctx(2, session="g22"), "google.list_mail", {"filter": "ads"})
+    github = next(r for r in ads.display[0]["data"]["rows"] if r["from"] == "GitHub")
+    assert "notice" in github["marks"] and "reply" not in github["marks"]

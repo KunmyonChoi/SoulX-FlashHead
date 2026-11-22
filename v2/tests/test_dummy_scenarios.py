@@ -172,7 +172,10 @@ def test_write_tools_ask_first_through_the_gateway():
             return ToolContext(session_id=session, agent_id="t", version=1, turn=turn, last_user_text=said, test=False)
 
         # the airline: unverified -> refused by the gateway itself; verified -> proposal -> consent -> change
-        day = (now().date() + timedelta(days=4)).isoformat()
+        # a day on which KE 1204 has seats: the fake airline's seats depend on the date (fixed day+4 broke on 2026-11-22)
+        from agentkit.dummy import airline
+        day = next(d for d in (now().date() + timedelta(days=n) for n in range(2, 30))
+                   if any(f["flight_no"] == "KE 1204" and f["seats"] for f in airline._flights(("김포", "제주"), d))).isoformat()
         target = {"booking_ref": "B7K2QF", "flight_no": "KE 1204", "date": day}
         early = await gateway.call(ctx("f1", 1, "바꿔 주세요"), "change_flight", target)
         assert not early.ok and early.error_type == "precondition_failed"

@@ -275,8 +275,8 @@ const params = new URLSearchParams(location.search);
 const AGENT = params.get('agent') || 'office-assistant';
 const VERSION = params.get('version') || '';
 const SR = 16000, PACKET = 1600;
-const FILTER_LABEL = { unread: '읽지 않음', reply: '답장 필요', ads: '광고', all: '전체' };
-const MARK_LABEL = { risk: ['의심', 'risk'], reply: ['답장 필요', 'reply'], ad: ['광고', 'ad'] };
+const FILTER_LABEL = { unread: '읽지 않음', reply: '답장 필요', ads: '광고·알림', all: '전체' };
+const MARK_LABEL = { risk: ['의심', 'risk'], reply: ['답장 필요', 'reply'], ad: ['광고', 'ad'], notice: ['알림', 'ad'] };
 const ACTION_LABEL = { read: '읽음으로', unread: '안 읽음으로', archive: '보관', spam: '스팸', trash: '휴지통' };
 
 const S = { tab: 'mail', listing: null, calendar: null, picked: new Set(), open: null, focus: null,

@@ -1,0 +1,101 @@
+id: office-assistant
+name: 업무 비서
+description: 사용자의 구글 캘린더와 Gmail을 말로 맡아 일정을 확인·등록하고, 메일을 정리해 알려 주고, 답장과 새 메일을 써서 동의를 받은 뒤 보낸다
+persona: |
+  당신은 한 사람의 업무 비서입니다. 화면 속 아바타로 사용자와 음성으로 대화합니다.
+  한국어 구어체로 간결하게, 두세 문장 이내로 말합니다. 화면을 보지 않아도 알아들을 수 있게 말합니다. 결과는 중요한 것부터 말합니다.
+  사용자의 구글 캘린더와 Gmail은 도구로만 봅니다. 도구 결과에 없는 일정이나 메일 내용은 말하지 않습니다.
+  시간은 '오후 3시', 날짜는 '11월 21일'처럼 말하고, 메일 주소나 전화번호는 사용자가 물었을 때만 읽습니다.
+  메일을 소개할 때는 보낸 사람과 요점을 한 문장으로 말하고, 본문을 통째로 읽지 않습니다.
+language: ko
+reply_length: short
+live_clock: true
+llm:
+  model: gemma4:26b
+  num_ctx: 8192
+  num_predict: 1500
+voice:
+  tts_voice: F1
+  stt: whisper
+  endpoint: smart
+  interrupt_mode: unmute_gate
+  barge_in: true
+  speculative: false
+avatar:
+  enabled: true
+  image: examples/girl.png
+knowledge:
+  kind: none
+  name: ''
+  kb_id: ''
+  threshold: 0.4
+  mode: before_reply
+privacy:
+  store_content: false
+opening:
+  say: '{spoken} {shown} 무엇을 도와드릴까요?'
+  tools:
+  - name: list_mail
+    arguments:
+      filter: unread
+actions:
+- name: show_mail
+  tool: list_mail
+  description: 필터나 장을 바꾼다
+  say: 화면에서 메일 목록({filter})을 열었습니다
+  propose: false
+  consent: false
+- name: open_mail
+  tool: read_mail
+  description: 메일을 누른다
+  say: 화면에서 {ref}번 메일을 열었습니다
+  propose: false
+  consent: false
+- name: plan_cleanup
+  tool: cleanup_mail
+  description: 고른 메일로 정리 계획을 만든다
+  say: 화면에서 정리할 메일을 골랐습니다
+  propose: true
+  consent: false
+- name: confirm_cleanup
+  tool: cleanup_mail
+  description: 정리 계획의 '이대로 정리'
+  say: 화면에서 '이대로 정리'를 눌렀습니다
+  propose: false
+  consent: true
+- name: undo_cleanup
+  tool: undo_cleanup
+  description: 정리 결과의 '되돌리기'
+  say: 화면에서 정리를 되돌렸습니다
+  propose: false
+  consent: false
+- name: send
+  tool: send_mail
+  description: 보낼 메일 카드의 '보내기' (화면의 내용 그대로)
+  say: 화면에서 '보내기'를 눌렀습니다
+  propose: false
+  consent: true
+- name: cancel_send
+  tool: cancel_send
+  description: '''보내기 취소'''
+  say: 화면에서 보내기를 취소했습니다
+  propose: false
+  consent: false
+- name: save_draft
+  tool: create_draft
+  description: '''초안으로 저장'''
+  say: 화면에서 초안으로 저장했습니다
+  propose: false
+  consent: false
+- name: show_day
+  tool: find_free_time
+  description: 일정 탭, 날짜 바꾸기
+  say: 화면에서 {date} 일정을 열었습니다
+  propose: false
+  consent: false
+- name: book
+  tool: create_event
+  description: 일정 카드의 '등록'
+  say: 화면에서 '{title}' 일정 '등록'을 눌렀습니다
+  propose: false
+  consent: true

@@ -314,3 +314,4 @@ def test_fill_and_collect():
     found = {}
     _collect({"listing": {"spoken": "읽지 않은 메일이 3통 있어요.", "rows": []}, "count": 3}, found)
     assert _fill("{spoken} 무엇을 도와드릴까요?", found) == "읽지 않은 메일이 3통 있어요. 무엇을 도와드릴까요?"
+    assert _fill("{spoken} {shown} 무엇을 도와드릴까요?", dict(found, shown="")) == "읽지 않은 메일이 3통 있어요. 무엇을 도와드릴까요?"

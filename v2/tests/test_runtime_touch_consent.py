@@ -55,10 +55,10 @@ async def test_plan_then_confirm_cleanup_by_touch():
     assert card["kind"] == "confirm" and card["data"]["arguments"] == {"spam": "1,2"} and len(card["data"]["plan"][0]["items"]) == 2
     told = [m for m in llm.calls[1]["messages"] if m["role"] == "tool"][-1]["content"]
     assert "아직 실행하지 않았습니다" in told                                        # not "already done"
-    assert await fake.counts() == {"unread": 3, "ads": 2, "all": 7}
+    assert await fake.counts() == {"unread": 3, "ads": 3, "all": 7}
     done = await gather(engine.act("confirm_cleanup", {"spam": "1"}))                 # the user unticked one
     assert tools_done(done) == [("cleanup_mail", True, False)]
-    assert await fake.counts() == {"unread": 3, "ads": 1, "all": 6}
+    assert await fake.counts() == {"unread": 3, "ads": 2, "all": 6}
 
 
 async def test_touch_consent_does_not_reach_the_models_own_calls_in_that_turn():

@@ -75,7 +75,7 @@ def _fill(say, found):
         if any(k not in found for k in keys):
             continue
         kept.append(re.sub(r"\{(\w+)\}", lambda m: str(found[m.group(1)]), sentence))
-    return " ".join(kept).strip()     # a cut-off turn's words are put in front of the next one said within this many seconds
+    return re.sub(r"\s{2,}", " ", " ".join(kept)).strip()       # an empty value leaves no double space     # a cut-off turn's words are put in front of the next one said within this many seconds
 
 
 class _Turn:
