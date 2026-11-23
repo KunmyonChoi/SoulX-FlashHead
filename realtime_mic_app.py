@@ -49,6 +49,7 @@ import io
 import json
 import math
 import os
+import random
 import re
 import struct
 import time
@@ -97,8 +98,21 @@ BACKCHANNEL = re.compile(
 )
 
 
+# Said with a backchannel that took the turn. Without it the model answered "아 그렇군요" with the clock that comes
+# with every turn ("네, 지금은 ... 오후 7시 49분입니다"), and did so again at the next one (2026-11-23, auto mode).
+BACKCHANNEL_NOTE = ("(시스템 안내: 사용자는 맞장구만 쳤습니다. 새 질문이 아닙니다. 끊긴 이야기를 자연스럽게 이어서 짧게 말하세요. "
+                    "앞에서 한 말이나 지금 시각을 되풀이하지 마세요.)")
+
+
+# A short reaction that is not a question: "아 그런 거였군요", "오 그건 몰랐네요", "보험료 얘기네요".
+BACKCHANNEL_PHRASE = re.compile(r"^[가-힣]{0,8}(군요|구나|구요|네요|겠네요|겠어요|었군요|였군요)$")
+
+
 def is_backchannel(text):
-    return bool(BACKCHANNEL.match(re.sub(r"[\s.,!?~…]", "", text)))
+    if re.search(r"[?？]", text or ""):
+        return False                     # "정말요?" asks back
+    bare = re.sub(r"[\s.,!?~…]", "", text or "")
+    return bool(BACKCHANNEL.match(bare)) or (len(bare) <= 10 and bool(BACKCHANNEL_PHRASE.match(bare)))
 
 
 # A short answer to a yes/no question. Said right after the question, it must not be lost as noise, as a
@@ -222,11 +236,21 @@ AUTO_DECIDE_PROMPT = (
     "지금까지 들린 상대의 말: {heard}\n\n"
     "지금 어떻게 반응할지 하나만 고르세요.\n"
     "- wait: 계속 듣는다.\n"
-    "- backchannel: 듣고 있다는 짧은 추임새를 넣는다. text는 '네', '아 그렇군요', '오 정말요' 같은 여덟 글자 이내.\n"
+    "- backchannel: 듣고 있다는 추임새를 넣는다. 이번 길이는 {length}. 들은 말에 맞는 반응을 고른다: 짧은 대답('네', '음', "
+    "'응'), 공감('맞아요', '그렇죠'), 놀람('오', '와 정말요'), 이해('아하', '그렇구나'), 들은 내용에 맞춘 한마디('아 그게 이전이군요', "
+    "'보험료 얘기네요'). 내가 이미 한 추임새({used})와 같은 말은 쓰지 않는다.\n"
     "- interrupt: 상대의 말을 끊고 끼어든다. text는 되묻거나 반박하거나 화제를 바꾸는 한 문장.\n"
     "성향: {tendency}\n"
     "JSON으로만 답하세요."
 )
+# Each backchannel is asked for at a length picked at random, and the latest ones are named so that they are not said
+# again (2026-11-23: the simulated user said "아 그렇군요" every time).
+BACKCHANNEL_LENGTHS = ["한두 글자", "세~다섯 글자", "여섯~열 글자"]
+BACKCHANNEL_SPARE = {
+    "한두 글자": ["네", "음", "응", "오", "와", "아하"],
+    "세~다섯 글자": ["그렇군요", "맞아요", "그렇죠", "아 네네", "오 정말요", "그렇구나"],
+    "여섯~열 글자": ["아 그런 거였군요", "오 그건 몰랐네요", "아 이해가 되네요", "그럴 수 있겠네요"],
+}
 AUTO_DECIDE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -1742,6 +1766,8 @@ def create_app(args):
                         if note:
                             content = f"{note}\n{content}"
                         message = {**message, "content": f"{clock}\n{content}" if live else content}
+                    if message is user_message and request.get("backchannel"):
+                        message = {**message, "content": message["content"] + "\n" + BACKCHANNEL_NOTE}
                     if message is not reply:
                         messages.append(message)
                 return messages + nudge
@@ -2073,7 +2099,7 @@ def create_app(args):
             chat_state["task"] = task
             spec["task"] = None
 
-        async def on_utterance(audio, utterance_end, over_avatar=False, in_tail=False):
+        async def on_utterance(audio, utterance_end, over_avatar=False, in_tail=False, began_over_avatar=False):
             """over_avatar: the utterance began while the avatar was talking and has not interrupted it yet.
             in_tail: it began after the avatar's last words, while only the playback allowance was left."""
             listen["transcribing"] = True
@@ -2115,6 +2141,9 @@ def create_app(args):
                     "stt_ms": (time.perf_counter() - started) * 1000,
                     "utterance_end": utterance_end,
                     "language": heard_in,
+                    # "아 그렇군요" said over the avatar in a mode that cuts it at once (basic, unmute): it takes the
+                    # turn, but it is a listener's noise, not a question (see llm_messages)
+                    "backchannel": began_over_avatar and is_backchannel(text) and not one_word_answer,
                 }
                 await send_json({"type": "transcript", "id": request["id"], "text": text,
                                  "stt_ms": request["stt_ms"], "language": heard_in, "engine": settings["stt"]})
@@ -2141,6 +2170,7 @@ def create_app(args):
                     if kind == "start":
                         listen["over_avatar"] = False
                         listen["in_tail"] = tail
+                        listen["began_over_avatar"] = avatar_busy() and not tail
                     if kind == "start" and avatar_busy():
                         if tail:
                             pass   # the avatar has said everything: this is the user's turn, likely an answer
@@ -2165,7 +2195,8 @@ def create_app(args):
                             asyncio.create_task(commit_speculation(audio, utterance_end))
                         else:
                             asyncio.create_task(on_utterance(audio, utterance_end, listen["over_avatar"],
-                                                             listen.get("in_tail", False)))
+                                                             listen.get("in_tail", False),
+                                                             listen.get("began_over_avatar", False)))
                         listen["over_avatar"] = False
                         listen["in_tail"] = False
                 voiced = endpointer.voiced * Endpointer.WINDOW / engine.sample_rate
@@ -2183,6 +2214,7 @@ def create_app(args):
             "active": False, "task": None, "mic_task": None, "topic": "", "level": "medium",
             "guest_voice": "M1", "max_turns": 6, "ask_live": False,
             "dialogue": [],            # (speaker, text) as the simulated user experienced it
+            "backchannels": [],        # what the simulated user has said as backchannels, oldest first
             "avatar_audio": bytearray(),  # avatar speech sent since the user's last full turn
             "avatar_end_at": 0.0,      # when the avatar speech sent so far finishes playing
             "guest_until": 0.0,        # when the simulated user's current utterance ends
@@ -2319,10 +2351,13 @@ def create_app(args):
                         last_decision = now
                         heard = await guest_hear()
                         question = next((t for who, t in reversed(auto["dialogue"]) if who == "guest"), "")
+                        length = random.choice(BACKCHANNEL_LENGTHS)
+                        recent = auto["backchannels"][-4:]
                         raw = await llm.complete(
                             [{"role": "system", "content": AUTO_GUEST_PROMPT.format(topic=auto["topic"])},
                              {"role": "user", "content": AUTO_DECIDE_PROMPT.format(
-                                 question=question, heard=heard, tendency=tendency)}],
+                                 question=question, heard=heard, tendency=tendency, length=length,
+                                 used=", ".join(f"'{t}'" for t in recent) or "없음")}],
                             settings["model"], AUTO_DECIDE_SCHEMA,
                         )
                         try:
@@ -2331,7 +2366,13 @@ def create_app(args):
                             continue
                         action = decision.get("action")
                         if action == "backchannel" and loop.time() - last_backchannel >= backchannel_gap:
-                            utterance = await guest_prepare("backchannel", str(decision.get("text", ""))[:12])
+                            text = str(decision.get("text", "")).strip()[:16]
+                            said = {re.sub(r"[\s.,!?~…]", "", t) for t in recent}
+                            if not text or re.sub(r"[\s.,!?~…]", "", text) in said:
+                                spare = [t for t in BACKCHANNEL_SPARE[length] if re.sub(r"[\s.,!?~…]", "", t) not in said]
+                                text = random.choice(spare or BACKCHANNEL_SPARE[length])
+                            auto["backchannels"].append(text)
+                            utterance = await guest_prepare("backchannel", text)
                             if utterance and avatar_speaking():
                                 last_backchannel = loop.time()
                                 await guest_say(utterance)
@@ -2397,7 +2438,7 @@ def create_app(args):
                 "guest_voice": request.get("guest_voice") or "M1",
                 "max_turns": max(1, min(30, int(request.get("max_turns") or 6))),
                 "ask_live": bool(request.get("ask_live")),
-                "dialogue": [], "avatar_end_at": 0.0, "guest_until": 0.0,
+                "dialogue": [], "backchannels": [], "avatar_end_at": 0.0, "guest_until": 0.0,
             })
             auto["avatar_audio"].clear()
             del history[1:]
