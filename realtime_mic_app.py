@@ -85,6 +85,9 @@ GATE_FRAME = 320  # 20 ms at 16 kHz
 GUEST_MAGIC = b"FHGA"  # binary message carrying the simulated user's voice (auto source)
 # Rough delay between the server sending a chunk and the browser starting to play it.
 CLIENT_PLAYBACK_DELAY = 0.3
+# A question sentence of the reply; a short yes or no begun up to this many seconds after it was heard answers it.
+QUESTION_END = re.compile(r"[?？]\s*$")
+ANSWER_WINDOW = 3.0
 # How many times one reply may go back to the LLM with tool results before it has to answer.
 MAX_TOOL_ROUNDS = 2
 
@@ -1441,7 +1444,7 @@ def create_app(args):
         history = [{"role": "system", "content": args.llm_system}]
         chat_state = {"task": None}
         synth_state = {"busy": False}
-        settings = {"voice": None, "model": None, "barge_in": False, "interrupt_mode": "basic",
+        settings = {"voice": None, "model": None, "barge_in": False, "interrupt_mode": "unmute_gate",
                     "speculative": False, "tools": False,
                     # knowledge: search the WeKnora knowledge base before each reply
                     # knowledge_threshold: rerank score a chunk needs to be put into the prompt
@@ -2010,6 +2013,12 @@ def create_app(args):
             """The avatar's last words were a question: a short "좋아" or "네" is now an answer."""
             return last_agent_text().rstrip().endswith(("?", "？"))
 
+        def answers_a_question(began):
+            """An utterance that began between hearing a question's first words and ANSWER_WINDOW after its last:
+            a short yes or no then answers it, even while the avatar goes on."""
+            window = listen.get("question")
+            return bool(window) and window[0] - 0.2 <= began <= window[1] + ANSWER_WINDOW
+
         async def update_listen_state():
             if listen["transcribing"]:
                 state = "transcribing"
@@ -2099,7 +2108,8 @@ def create_app(args):
             chat_state["task"] = task
             spec["task"] = None
 
-        async def on_utterance(audio, utterance_end, over_avatar=False, in_tail=False, began_over_avatar=False):
+        async def on_utterance(audio, utterance_end, over_avatar=False, in_tail=False, began_over_avatar=False,
+                               began_at=None):
             """over_avatar: the utterance began while the avatar was talking and has not interrupted it yet.
             in_tail: it began after the avatar's last words, while only the playback allowance was left."""
             listen["transcribing"] = True
@@ -2124,7 +2134,8 @@ def create_app(args):
                     await send_json({"type": "metric", "name": "hallucination_ignored", "text": text})
                     await update_listen_state()
                     return
-            answering = expecting_answer() and (only_tail() or not avatar_busy())
+            answering = (expecting_answer() and (only_tail() or not avatar_busy())) or (
+                began_at is not None and answers_a_question(began_at))
             one_word_answer = answering and bool(SHORT_ANSWER.match(_bare(text)))
             if in_tail and is_echo(text, last_agent_text()):
                 await send_json({"type": "metric", "name": "echo_ignored", "text": text})
@@ -2154,7 +2165,7 @@ def create_app(args):
         async def on_microphone(data):
             if stt is None or listen["transcribing"]:
                 return
-            expecting = expecting_answer()
+            expecting = expecting_answer() or answers_a_question(loop.time())
             endpointer.min_voiced = SHORT_ANSWER_VOICED if expecting else Endpointer.MIN_VOICED
             # After the avatar's last words the server still counts it busy for a while (the browser may still
             # be playing). Wiping the microphone then threw away a quick "좋아" or "그래": listen in that tail,
@@ -2171,6 +2182,7 @@ def create_app(args):
                         listen["over_avatar"] = False
                         listen["in_tail"] = tail
                         listen["began_over_avatar"] = avatar_busy() and not tail
+                        listen["began_at"] = loop.time()
                     if kind == "start" and avatar_busy():
                         if tail:
                             pass   # the avatar has said everything: this is the user's turn, likely an answer
@@ -2196,7 +2208,8 @@ def create_app(args):
                         else:
                             asyncio.create_task(on_utterance(audio, utterance_end, listen["over_avatar"],
                                                              listen.get("in_tail", False),
-                                                             listen.get("began_over_avatar", False)))
+                                                             listen.get("began_over_avatar", False),
+                                                             listen.get("began_at")))
                         listen["over_avatar"] = False
                         listen["in_tail"] = False
                 voiced = endpointer.voiced * Endpointer.WINDOW / engine.sample_rate
@@ -2517,7 +2530,20 @@ def create_app(args):
                 stream["idle"] = not pcm and not speech   # nothing to say: the next speech may start at once
                 chunk_speech[session["seq"]] = (stream["base"], len(pcm))
                 chunk_speech.pop(session["seq"] - 200, None)
-                stream["base"] += len(pcm)
+                chunk_start, stream["base"] = stream["base"], stream["base"] + len(pcm)
+                if pcm:
+                    # When each question of the reply is heard (about when this chunk plays): a short "네" said from
+                    # then on answers it, even if the avatar goes on talking or the "네" overlaps its last word
+                    # (2026-11-23: only a reply that ended on a question counted)
+                    heard_at = loop.time() + CLIENT_PLAYBACK_DELAY
+                    for piece in last_reply["pieces"]:
+                        if not QUESTION_END.search(piece["text"]) or piece.get("question_end") is not None:
+                            continue
+                        if piece.get("question_start") is None and piece["start"] < stream["base"]:
+                            piece["question_start"] = heard_at + max(0, piece["start"] - chunk_start) / 2 / engine.sample_rate
+                        if piece["end"] <= stream["base"]:
+                            piece["question_end"] = heard_at + max(0, piece["end"] - chunk_start) / 2 / engine.sample_rate
+                            listen["question"] = (piece["question_start"], piece["question_end"])
                 if pcm:
                     # the browser plays this chunk a moment later; allow for that and for room echo
                     listen["busy_until"] = loop.time() + duration + 1.0
