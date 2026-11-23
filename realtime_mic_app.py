@@ -85,6 +85,8 @@ GATE_FRAME = 320  # 20 ms at 16 kHz
 GUEST_MAGIC = b"FHGA"  # binary message carrying the simulated user's voice (auto source)
 # Rough delay between the server sending a chunk and the browser starting to play it.
 CLIENT_PLAYBACK_DELAY = 0.3
+WIND_DOWN_MAX = 1.5    # seconds the avatar may go on to finish its clause after a cue; further, it fades at a word gap
+WIND_DOWN_FADE = 0.25
 # A question sentence of the reply; a short yes or no begun up to this many seconds after it was heard answers it.
 QUESTION_END = re.compile(r"[?？]\s*$")
 ANSWER_WINDOW = 3.0
@@ -1479,6 +1481,8 @@ def create_app(args):
                     # cue_replies: "오 정말?", "네?", "보험료요?" get a short answer and the rest of the reply
                     # (listener_cue); off: they are new questions, as before
                     "cue_replies": True,
+                    # cue_style: "wind_down" finishes the clause before answering a cue; "cut" stops at once
+                    "cue_style": "wind_down",
                     "speculative": False, "tools": False,
                     # knowledge: search the WeKnora knowledge base before each reply
                     # knowledge_threshold: rerank score a chunk needs to be put into the prompt
@@ -1514,6 +1518,7 @@ def create_app(args):
         # speech stream of this session (sent or dropped), so they survive `speech` being cut.
         stream = {"base": 0, "in_flight": False, "idle": True}
         chunk_speech = {}      # chunk seq -> (stream position of its first speech byte, speech bytes in it)
+        chunk_sent = {}        # chunk seq -> loop time it was sent (to estimate what the browser plays now)
         # pieces: spoken text + stream range; queued/synthesised/llm_done tell whether more was coming
         last_reply = {"message": None, "id": None, "pieces": [], "queued": 0, "synthesised": 0, "llm_done": False,
                       "tool_entries": []}
@@ -1616,6 +1621,88 @@ def create_app(args):
                 listen["busy_until"] = loop.time() + 0.3
                 auto["avatar_end_at"] = loop.time()  # the browser drops what it had buffered
                 kick.set()
+
+        # ---- winding down: a cue over the avatar lets it finish the clause it is in (cue_style "wind_down") ----
+        def play_position():
+            """The stream byte the browser is playing now, estimated from when the chunks were sent."""
+            now = loop.time()
+            for seq in sorted(chunk_sent, reverse=True)[:6]:
+                start, length = chunk_speech.get(seq, (None, 0))
+                begins = chunk_sent[seq] + 0.06
+                if start is not None and now >= begins:
+                    return start + min(length, int((now - begins) * engine.sample_rate) * 2)
+            return stream["base"]
+
+        def clause_stop(position):
+            """(stop byte, clean, heard text): the first clause end (",", ".", "?") ahead of what is playing, or, when
+            that is more than WIND_DOWN_MAX away, a word gap a little ahead (clean False: to be faded there)."""
+            rate2 = engine.sample_rate * 2
+            ahead = position + int(0.08 * rate2)
+            pieces = last_reply["pieces"]
+
+            def heard_until(index, chars):
+                return " ".join([p["text"] for p in pieces[:index]] + [pieces[index]["text"][:chars]]).strip()
+            for i, p in enumerate(pieces):
+                if p["end"] <= ahead:
+                    continue
+                span, text = p["end"] - p["start"], p["text"]
+                # clause ends: punctuation, and a connecting ending before a space ("살펴보고 ", "그래서 ")
+                for m in sorted(list(re.finditer(r"[,.!?。，]", text)) + list(LINK_END.finditer(text)),
+                                key=lambda m: m.end()) + [None]:
+                    chars = m.end() if m else len(text)
+                    byte = p["start"] + int(span * chars / max(1, len(text)))
+                    if byte >= ahead:
+                        if byte - position <= WIND_DOWN_MAX * rate2:
+                            return byte - byte % 2, True, heard_until(i, chars)
+                        break
+                break
+            for i, p in enumerate(pieces):
+                if p["start"] <= position < p["end"]:
+                    span, text = p["end"] - p["start"], p["text"]
+                    for m in re.finditer(r"\s", text):
+                        byte = p["start"] + int(span * m.start() / max(1, len(text)))
+                        if byte >= position + int(0.2 * rate2):
+                            return byte - byte % 2, False, heard_until(i, m.start())
+            byte = position + int(0.2 * rate2)
+            return byte - byte % 2, False, ""
+
+        async def wind_down():
+            """Lets the avatar finish the clause it is in (or fades it at a word gap), drops the rest of the reply and
+            keeps in the history only what will have been heard. Returns (heard text, clean)."""
+            stop, clean, heard = clause_stop(play_position())
+            if spec["task"] is not None:
+                await discard_speculation()
+            generation["n"] += 1
+            while not requests.empty():
+                requests.get_nowait()
+            if chat_state["task"]:
+                chat_state["task"].cancel()
+                chat_state["task"] = None
+            keep = stop - stream["base"]
+            fade = 0.0 if clean else WIND_DOWN_FADE
+            if keep > 0:
+                del speech[keep:]
+                marks[:] = [m for m in marks if m["pos"] < keep]
+                if fade:   # a word gap mid-sentence: fade the last moment instead of stopping dead
+                    n = min(len(speech) // 2, int(fade * engine.sample_rate))
+                    tail = np.frombuffer(bytes(speech[len(speech) - 2 * n:]), dtype="<i2").astype(np.float32)
+                    tail *= np.linspace(1, 0, n, dtype=np.float32)
+                    speech[len(speech) - 2 * n:] = tail.astype("<i2").tobytes()
+            else:
+                speech.clear()
+                marks.clear()
+                # already sent: the page stops there itself
+                seq = max((s for s, (start, _) in chunk_speech.items() if start <= stop), default=None)
+                if seq is not None:
+                    offset = (stop - chunk_speech[seq][0]) / 2 / engine.sample_rate
+                    await send_json({"type": "stop_at", "seq": seq, "offset": offset, "fade": fade or 0.06})
+            message = last_reply["message"]
+            if message is not None:
+                message["content"] = heard
+                last_reply["message"] = None
+            logger.info(f"Wound down {'at a clause end' if clean else 'with a fade'} "
+                        f"{(stop - play_position()) / 2 / engine.sample_rate:+.2f} s from what plays; heard {heard[-40:]!r}")
+            return heard, clean
 
         def apply_playback(seq, offset):
             """Cut the interrupted reply down to what the browser actually played.
@@ -1731,14 +1818,25 @@ def create_app(args):
             kind, word, said = cue["kind"], cue.get("word"), str(request.get("text", "")).strip()
             # what was heard: the reply before this turn, already cut to what was played (apply_playback)
             index = next((k for k, m in enumerate(history) if m is user_message), len(history))
-            heard = next((m.get("content") or "" for m in reversed(history[1:index]) if m.get("role") == "assistant"), "")
+            heard = cue.get("heard")
+            if heard is None:
+                heard = next((m.get("content") or "" for m in reversed(history[1:index]) if m.get("role") == "assistant"), "")
             original = (cue.get("original") or "").strip()
             heard = heard.strip()
-            rest = original[len(heard):].strip() if heard and original.startswith(heard) else ""
+            rest = ""
+            if heard and original.startswith(heard):
+                rest = original[len(heard):].strip()
+            elif heard:
+                # the heard text is made of speech pieces, whose spacing may differ from the reply's: find its end
+                tail = heard[-12:]
+                at = original.find(tail)
+                rest = original[at + len(tail):].strip() if at >= 0 else ""
             sentences = [s for s in re.split(r"(?<=[.!?。])\s+", heard) if s.strip()]
             last = sentences[-1] if sentences else heard
             partial = None
-            if rest and sentences and not re.search(r"[.!?。]\s*$", heard):
+            # cut mid-sentence by a plain stop: say that sentence again. A wind-down (cue["heard"]) instead goes on from
+            # the cut: saying the sentence again was heard as repeating oneself (2026-11-23)
+            if rest and sentences and not re.search(r"[.!?。]\s*$", heard) and cue.get("heard") is None:
                 # cut inside a sentence: say that sentence again from its start ("그럼요. 살펴보고 ..." was heard when
                 # the model went on from the cut, 2026-11-23)
                 partial = last
@@ -1751,7 +1849,10 @@ def create_app(args):
                 reply["content"] = ack + " "
                 await out({"type": "chat_delta", "id": request.get("id"), "text": ack + " "})
             go_on = None
-            if rest:
+            if rest and cue.get("heard") is not None and not cue.get("clean"):
+                go_on = (f"말이 \"…{heard[-25:]}\"에서 끊겼습니다. 앞의 말을 되풀이하지 말고, 끊긴 곳부터 자연스럽게 이어서 남은 "
+                         f"내용을 말하세요(필요하면 끊긴 문장의 뒷부분만 매끄럽게 다시 잇습니다). 남은 부분: \"{rest[:400]}\"")
+            elif rest:
                 go_on = ((f"말이 문장 중간에서 끊겼으니 그 문장 \"{partial}…\"을 처음부터 다시 말한 뒤, " if partial else "")
                          + f"끊긴 말의 남은 부분을 자연스럽게 이어서 말하세요. 남은 부분: \"{rest[:400]}\"")
             if kind == "ask_back":
@@ -2248,7 +2349,13 @@ def create_app(args):
                                       "original": (last_reply["message"] or {}).get("content") or last_agent_text()}
                 await send_json({"type": "transcript", "id": request["id"], "text": text,
                                  "stt_ms": request["stt_ms"], "language": heard_in, "engine": settings["stt"]})
-                await cancel_speech()
+                if (cue is not None and cue[0] in ("ask_back", "word") and settings.get("cue_style") == "wind_down"
+                        and avatar_busy() and last_reply["message"] is not None):
+                    # finish the clause, then the short answer, then the rest (prepared while the clause plays)
+                    heard, clean = await wind_down()
+                    request["cue"]["heard"], request["cue"]["clean"] = heard, clean
+                else:
+                    await cancel_speech()
                 chat_state["task"] = asyncio.create_task(chat(generation["n"], request))
             await update_listen_state()
 
@@ -2669,6 +2776,8 @@ def create_app(args):
                     await send_chunk(pcm, sent * engine.slice_samples, 0)
                 finally:
                     stream["in_flight"] = False
+                chunk_sent[session["seq"] - 1] = loop.time()
+                chunk_sent.pop(session["seq"] - 200, None)
                 index += 1
                 sent += 1
                 if endpointer:
