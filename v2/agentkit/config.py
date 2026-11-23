@@ -17,7 +17,11 @@ WEB_DIR = Path(_env("WEB_DIR", V2_ROOT / "web"))
 
 LLM_URL = _env("LLM_URL", "http://127.0.0.1:11434")           # Ollama
 LLM_MODEL = _env("LLM_MODEL", "gemma4:26b")
-TTS_URL = _env("TTS_URL", "http://127.0.0.1:7788")            # supertonic serve
+# supertonic serve. The GPU one first (tts_gpu_server.py: 30 ms a piece instead of 400-700 ms on the CPU, measured
+# 2026-11-23); the CPU one when the GPU one does not answer.
+TTS_URL = _env("TTS_URL", "http://127.0.0.1:7789")
+TTS_FALLBACK_URL = _env("TTS_FALLBACK_URL", "http://127.0.0.1:7788")
+TTS_STEPS = int(_env("TTS_STEPS", 5))   # synthesis steps (supertonic's default 8); 5 judged as good by the owner
 ASR_URL = _env("ASR_URL", "http://127.0.0.1:7790")            # realtime_asr_server.py (Qwen3-ASR)
 WEKNORA_URL = _env("WEKNORA_URL", "http://127.0.0.1/api/v1")
 WEKNORA_KEY_FILE = _env("WEKNORA_KEY_FILE", "~/.weknora_rt_key")

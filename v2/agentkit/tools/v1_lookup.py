@@ -94,6 +94,10 @@ async def search_wikipedia(arguments, ctx):
     return await _run("search_wikipedia", arguments.get("query"), getattr(ctx, "language", "ko") or "ko")
 
 
+async def web_search(arguments, ctx):
+    return await _run("web_search", arguments.get("query"))
+
+
 # ---- knowledge base listing (WeKnora) ---------------------------------------------------------
 
 

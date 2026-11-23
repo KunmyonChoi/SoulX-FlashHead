@@ -15,6 +15,7 @@ import math
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -171,14 +172,45 @@ def float_to_pcm16(audio):
 
 
 class TTSClient:
-    """Minimal client for `supertonic serve`. Stateless, so one instance serves every session."""
+    """Minimal client for `supertonic serve`. Stateless, so one instance serves every session.
 
-    def __init__(self, url=None, sample_rate=SAMPLE_RATE):
+    Tries config.TTS_URL (the GPU server) and, when it does not answer, config.TTS_FALLBACK_URL (the CPU server); after
+    a failure the fallback is used for a minute before the first one is tried again."""
+
+    RETRY_S = 60.0
+
+    def __init__(self, url=None, sample_rate=SAMPLE_RATE, fallback=None, steps=None):
         self.url = (url or config.TTS_URL).rstrip("/")
+        self.fallback = (fallback if fallback is not None else (None if url else config.TTS_FALLBACK_URL)) or None
+        self.fallback = self.fallback.rstrip("/") if self.fallback and self.fallback.rstrip("/") != self.url else None
         self.sample_rate = sample_rate
+        self.steps = config.TTS_STEPS if steps is None else steps
+        self._down_until = 0.0     # time.monotonic() until which self.url is skipped
+
+    def _urls(self):
+        import time as _time
+        if self.fallback and _time.monotonic() < self._down_until:
+            return [self.fallback, self.url]
+        return [self.url] + ([self.fallback] if self.fallback else [])
+
+    def _open(self, path, data=None, timeout=60):
+        import time as _time
+        error = None
+        for base in self._urls():
+            request = urllib.request.Request(base + path, data=data,
+                                             headers={"Content-Type": "application/json"} if data else {})
+            try:
+                return urllib.request.urlopen(request, timeout=timeout)
+            except urllib.error.URLError as e:
+                if isinstance(e, urllib.error.HTTPError):
+                    raise                        # the server answered: its error stands
+                error = e
+                if base == self.url and self.fallback:
+                    self._down_until = _time.monotonic() + self.RETRY_S
+        raise error
 
     def voices(self):
-        with urllib.request.urlopen(self.url + "/v1/styles", timeout=3) as response:
+        with self._open("/v1/styles", timeout=3) as response:
             return [style["name"] for style in json.load(response)["styles"]]
 
     def synthesize(self, text, voice, lang, speed=None):
@@ -188,12 +220,9 @@ class TTSClient:
         body = {"text": spoken_form(text, lang), "voice": voice, "lang": lang, "response_format": "wav"}
         if speed:
             body["speed"] = speed
-        request = urllib.request.Request(
-            self.url + "/v1/tts",
-            data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=60) as response:
+        if self.steps:
+            body["steps"] = self.steps
+        with self._open("/v1/tts", data=json.dumps(body).encode()) as response:
             wav, sr = sf.read(io.BytesIO(response.read()), dtype="float32", always_2d=True)
         wav = trim_silence(wav.mean(axis=1), sr)
         if sr != self.sample_rate:
