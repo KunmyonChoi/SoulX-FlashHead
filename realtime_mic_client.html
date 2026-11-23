@@ -42,6 +42,7 @@
   .modes label:has(input:checked) { background: var(--raised); color: var(--text); }
   .modes label:has(input:disabled) { cursor: default; opacity: .6; }
   .bar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .engines { color: var(--muted); font-size: 13px; }
   .state { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; min-width: 96px; }
   .state::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
   body.running .state::before { background: var(--live); box-shadow: 0 0 0 4px rgba(255, 90, 79, .18); }
@@ -182,6 +183,9 @@
     <label><input type="radio" name="source" value="mic"> 마이크 따라 말하기</label>
   </div>
   <div class="bar-right">
+    <span class="engines" id="engines" title="아바타 영상 엔진과 음성 인식. 대화를 시작하면 저절로 올라오고, 오래 쓰지 않으면 내려가 GPU 메모리를 돌려줍니다.">엔진 확인 중…</span>
+    <button id="engine-warm" class="ghost" hidden title="엔진을 미리 올립니다(1분쯤). 준비해 두면 대화가 바로 시작됩니다.">엔진 준비</button>
+    <button id="engine-unload" class="ghost" hidden title="엔진을 내려 GPU 메모리를 돌려줍니다. 다음 대화 때 다시 올라옵니다.">내리기</button>
     <span class="state" id="s-state">대기</span>
     <button id="toggle">시작</button>
     <button id="open-settings" class="ghost" aria-haspopup="dialog">설정</button>
@@ -932,6 +936,10 @@ async function onMessage(data) {
       setMessage(m.message);
     } else if (m.type === 'error') {
       stop(m.message);
+    } else if (m.type === 'engine' && m.state === 'loading') {
+      $('s-state').textContent = '엔진 올리는 중';
+      setMessage('아바타 영상 엔진을 올리는 중입니다(' + Math.round((m.expected_s || 60)) + '초쯤). 올라오면 바로 시작합니다.');
+      Engines.refresh();
     }
     return;
   }
@@ -1186,6 +1194,34 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('settin
 applySource();
 showReference();
 requestAnimationFrame(draw);
+
+// ---- engines: loaded when a conversation needs them, by "엔진 준비", and dropped by "내리기" or after a while unused
+const Engines = {
+  minutes(s) { return s >= 60 ? Math.round(s / 60) + '분' : Math.max(0, Math.round(s)) + '초'; },
+  async refresh() {
+    let st;
+    try { st = await (await fetch('/api/engines')).json(); } catch (err) { $('engines').textContent = '엔진 상태를 모름'; return; }
+    const v = st.video || {}, a = st.stt || {};
+    const names = { unloaded: '내려감', loading: '올리는 중', ready: '준비됨', in_use: '사용 중', failed: '실패' };
+    let text = '영상 엔진 ' + (names[v.state] || v.state);
+    if (v.state === 'ready' && v.unloads_in_s != null) text += ' (' + this.minutes(v.unloads_in_s) + ' 뒤 내려감)';
+    if (a.state) text += ' · 음성 인식 ' + (names[a.state] || a.state);
+    if (v.state === 'failed' && v.error) text += ': ' + v.error.slice(0, 80);
+    $('engines').textContent = text;
+    $('engine-warm').hidden = !(v.state === 'unloaded' || v.state === 'failed' || a.state === 'unloaded');
+    $('engine-unload').hidden = !(v.state === 'ready' || a.state === 'ready') || running;
+  },
+  async post(path) {
+    $('engine-warm').disabled = $('engine-unload').disabled = true;
+    try { await fetch(path, { method: 'POST' }); } catch (err) { /* refresh shows the state */ }
+    $('engine-warm').disabled = $('engine-unload').disabled = false;
+    this.refresh();
+  },
+};
+$('engine-warm').onclick = () => Engines.post('/api/engines/warmup');
+$('engine-unload').onclick = () => Engines.post('/api/engines/unload');
+Engines.refresh();
+setInterval(() => Engines.refresh(), 5000);
 </script>
 </body>
 </html>

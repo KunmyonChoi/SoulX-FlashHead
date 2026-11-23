@@ -244,6 +244,133 @@ AUTO_LEVELS = {
 }
 
 
+class EngineHolder:
+    """The video engine, loaded when a conversation needs it (or on "엔진 준비") and dropped again by hand or after
+    --engine_idle_s without use, so its GPU memory goes back (about 8 GB). It used to be loaded at start-up and kept
+    for as long as the app ran (2026-11-23: GPU 0 was full and v2's avatar could not load).
+
+    The geometry (fps, chunk length, sample rate) is known without the model, so pages and sessions can be set up
+    before it loads. Methods that touch the model run on the single worker thread, as Engine requires."""
+
+    VAE_TEMPORAL_STRIDE = 4      # FlashHead's VAE; checked against the model once it is loaded
+    EXPECTED_LOAD_S = 60
+
+    def __init__(self, args):
+        self.args = args
+        params = get_infer_params()
+        self.sample_rate = params["sample_rate"]
+        self.fps = params["tgt_fps"]
+        self.width, self.height = params["width"], params["height"]
+        self.frame_num = params["frame_num"]
+        try:   # the model's own VAE stride, read from its config without loading it
+            folder = {"lite": "Model_Lite", "pro": "Model_Pro"}.get(args.model_type, "Model_Lite")
+            with open(os.path.join(args.ckpt_dir, folder, "config.json")) as f:
+                stride = json.load(f)["vae_stride"][0]
+        except Exception:
+            stride = self.VAE_TEMPORAL_STRIDE
+        self.motion_frames_num = (params["motion_frames_latent_num"] - 1) * stride + 1
+        self.slice_frames = self.frame_num - self.motion_frames_num
+        self.slice_samples = self.slice_frames * self.sample_rate // self.fps
+        self.engine = None
+        self.loading = None            # asyncio future of a load in progress
+        self.error = None
+        self.users = 0                 # sessions holding it
+        self.last_used = time.monotonic()
+        self.load_s = None
+        self.image = (args.cond_image, False)   # the reference image to (re)load with: (path, face crop)
+
+    # -- loading -------------------------------------------------------------------------------
+    def _load(self):
+        started = time.perf_counter()
+        engine = Engine(self.args)
+        if self.image[0] != self.args.cond_image:
+            engine.set_image(*self.image)
+        if engine.slice_frames != self.slice_frames:      # the model disagrees with the geometry assumed above
+            logger.warning(f"Chunk length is {engine.slice_frames} frames, not {self.slice_frames}: using the model's.")
+            self.motion_frames_num, self.slice_frames = engine.motion_frames_num, engine.slice_frames
+            self.slice_samples = engine.slice_samples
+        self.load_s = time.perf_counter() - started
+        return engine
+
+    async def ensure(self, on_worker):
+        """Loads the engine if it is not loaded; a second caller waits for the same load."""
+        if self.engine is not None:
+            return self.engine
+        if self.loading is None:
+            async def load():
+                try:
+                    self.error = None
+                    logger.info("Loading the video engine...")
+                    self.engine = await on_worker(self._load)
+                    self.last_used = time.monotonic()
+                    logger.info(f"Video engine ready in {self.load_s:.0f} s.")
+                    return self.engine
+                except Exception as e:
+                    self.error = f"{type(e).__name__}: {e}"[:300]
+                    logger.warning(f"Video engine unavailable: {self.error}")
+                    raise
+                finally:
+                    self.loading = None
+            self.loading = asyncio.ensure_future(load())
+        return await asyncio.shield(self.loading)
+
+    def unload(self, pool):
+        """Drops the engine and gives its GPU memory back. False (nothing happens) while in use or loading."""
+        if self.users or self.loading is not None or self.engine is None:
+            return False
+        self.engine = None
+
+        def free():
+            # after the last reference is gone; compiled graphs keep the model alive until the compiler's caches
+            # are reset, and only then can the memory go back (as in v2's avatar.py)
+            import gc
+            before = torch.cuda.memory_reserved()
+            try:
+                torch._dynamo.reset()
+            except Exception:
+                pass
+            gc.collect()
+            torch.cuda.empty_cache()
+            logger.info(f"Video engine unloaded: GPU memory held by this process {before / 2**30:.1f} GB -> "
+                        f"{torch.cuda.memory_reserved() / 2**30:.1f} GB.")
+        pool.submit(free)
+        return True
+
+    def status(self, idle_limit):
+        if self.loading is not None:
+            state = "loading"
+        elif self.engine is None:
+            state = "failed" if self.error else "unloaded"
+        else:
+            state = "in_use" if self.users else "ready"
+        out = {"state": state, "expected_s": self.EXPECTED_LOAD_S, "error": self.error, "load_s": self.load_s}
+        if state == "ready":
+            idle = time.monotonic() - self.last_used
+            out["idle_s"] = round(idle)
+            if idle_limit > 0:
+                out["unloads_in_s"] = max(0, round(idle_limit - idle))
+        return out
+
+    # -- what sessions call (on the worker thread) ----------------------------------------------
+    def step(self, audio):
+        return self.engine.step(audio)
+
+    def reset(self):
+        if self.engine is not None:
+            self.engine.reset()
+
+    def set_image(self, path, use_face_crop):
+        self.image = (path, use_face_crop)
+        if self.engine is not None:
+            self.engine.set_image(path, use_face_crop)
+
+    def reference_jpeg(self):
+        if self.engine is not None:
+            return self.engine.reference_jpeg()
+        image = cv2.imread(self.image[0])           # not loaded: the picture itself
+        return cv2.imencode(".jpg", image)[1].tobytes() if image is not None else b""
+
+
 class Engine:
     """Owns the pipeline. Every method must be called from the single worker thread."""
 
@@ -625,13 +752,35 @@ class Endpointer:
 
 
 class SpeechToText:
+    """Whisper, loaded on first use (or when a voice conversation starts) and dropped after --engine_idle_s without
+    use, like the video engine. All calls run on the speech-recognition thread."""
+
     def __init__(self, model_name, language):
-        from faster_whisper import WhisperModel
-        self.model = WhisperModel(model_name, device="cuda", compute_type="float16")
+        self.model_name = model_name
+        self.model = None
         self.language = language
+        self.last_used = time.monotonic()
+
+    def load(self):
+        if self.model is None:
+            from faster_whisper import WhisperModel
+            self.model = WhisperModel(self.model_name, device="cuda", compute_type="float16")
+            logger.info(f"Speech recognition loaded ({self.model_name}).")
+        self.last_used = time.monotonic()
+        return self
+
+    def unload(self):
+        if self.model is None:
+            return False
+        self.model = None
+        import gc
+        gc.collect()
+        logger.info("Speech recognition unloaded.")
+        return True
 
     def transcribe(self, audio, language=None):
         """Returns (text, language). language: "ko" / "en", or "auto" to pick between the two."""
+        self.load()
         language = language or self.language
         if language == "auto":
             # Whisper's own guess, limited to the languages the rest of the pipeline can speak:
@@ -1045,7 +1194,9 @@ def create_app(args):
     app = FastAPI()
     # One thread owns the GPU pipeline, so inference and image changes never overlap.
     pool = ThreadPoolExecutor(max_workers=1)
-    engine = pool.submit(Engine, args).result()
+    engine = EngineHolder(args)       # loaded when needed (EngineHolder); --preload_engine loads it at start-up
+    if args.preload_engine:
+        engine.engine = pool.submit(engine._load).result()
     state = {"busy": False}
     tts = TTSClient(args.tts_url, engine.sample_rate, args.tts_steps)
     tts_pool = ThreadPoolExecutor(max_workers=1)
@@ -1082,9 +1233,10 @@ def create_app(args):
     filler_cache = {}  # (voice, text) -> PCM of a "one moment" line, ready to play at once
     stt_pool = ThreadPoolExecutor(max_workers=1)
     try:
-        stt = stt_pool.submit(SpeechToText, args.stt_model, args.stt_lang).result()
+        stt = SpeechToText(args.stt_model, args.stt_lang)       # the model loads on first use
         stt_error = None
-        logger.info(f"Speech recognition ready ({args.stt_model}).")
+        if args.preload_engine:
+            stt_pool.submit(stt.load).result()
     except Exception as e:
         stt, stt_error = None, str(e)
         logger.warning(f"Speech recognition unavailable: {e}")
@@ -1101,6 +1253,61 @@ def create_app(args):
 
     async def on_worker(fn, *a):
         return await asyncio.get_running_loop().run_in_executor(pool, fn, *a)
+
+    # ---- engines: load on demand, by hand ("엔진 준비" / "내리기"), and drop after --engine_idle_s without use ----
+    def engines_status():
+        stt_state = None
+        if stt is not None:
+            if stt.model is None:
+                stt_state = {"state": "unloaded"}
+            else:
+                idle = time.monotonic() - stt.last_used
+                stt_state = {"state": "in_use" if state["busy"] else "ready", "idle_s": round(idle)}
+                if args.engine_idle_s > 0 and not state["busy"]:
+                    stt_state["unloads_in_s"] = max(0, round(args.engine_idle_s - idle))
+        # session_open: whether a conversation holds the app (it takes one at a time); check this instead of
+        # opening a socket, which now loads the engine
+        return {"video": engine.status(args.engine_idle_s), "stt": stt_state, "idle_unload_s": args.engine_idle_s,
+                "session_open": state["busy"]}
+
+    @app.get("/api/engines")
+    async def get_engines():
+        return engines_status()
+
+    @app.post("/api/engines/warmup")
+    async def warm_engines():
+        """Starts loading what is not loaded and returns at once; poll GET /api/engines."""
+        if engine.engine is None and engine.loading is None:
+            asyncio.ensure_future(engine.ensure(on_worker)).add_done_callback(lambda f: f.exception())
+        if stt is not None and stt.model is None:
+            asyncio.get_running_loop().run_in_executor(stt_pool, stt.load)
+        return engines_status()
+
+    @app.post("/api/engines/unload")
+    async def unload_engines():
+        done = {"video": engine.unload(pool),
+                "stt": False if state["busy"] or stt is None else await asyncio.get_running_loop().run_in_executor(
+                    stt_pool, stt.unload)}
+        return {**engines_status(), "unloaded": done}
+
+    async def idle_sweeper():
+        while True:
+            await asyncio.sleep(30)
+            try:
+                limit = args.engine_idle_s
+                if limit <= 0 or state["busy"]:
+                    continue
+                if engine.engine is not None and not engine.users and time.monotonic() - engine.last_used >= limit:
+                    if engine.unload(pool):
+                        logger.info(f"Video engine unloaded after {limit:.0f} s without use.")
+                if stt is not None and stt.model is not None and time.monotonic() - stt.last_used >= limit:
+                    await asyncio.get_running_loop().run_in_executor(stt_pool, stt.unload)
+            except Exception as e:
+                logger.warning(f"idle sweep failed: {e!r}")
+
+    @app.on_event("startup")
+    async def start_sweeper():
+        app.state.sweeper = asyncio.create_task(idle_sweeper())
 
     @app.get("/")
     async def index():
@@ -2311,7 +2518,18 @@ def create_app(args):
             return
         state["busy"] = True
         logger.info(f"Session started (source={source}).")
+        engine.users += 1
         try:
+            if engine.engine is None:
+                await ws.send_text(json.dumps({"type": "engine", "state": "loading", "expected_s": engine.EXPECTED_LOAD_S}))
+                try:
+                    await engine.ensure(on_worker)
+                except Exception:
+                    await ws.send_text(json.dumps({"type": "error", "message": f"아바타 영상 엔진을 올리지 못했습니다: {engine.error}"}))
+                    await ws.close()
+                    return
+            if source in ("voice", "auto") and stt is not None and stt.model is None:
+                asyncio.get_running_loop().run_in_executor(stt_pool, stt.load)   # ready before the first utterance
             await on_worker(engine.reset)
             await ws.send_text(json.dumps({
                 "type": "ready",
@@ -2374,6 +2592,10 @@ def create_app(args):
         except Exception as e:
             logger.info(f"Session ended: {type(e).__name__}: {e}")
         finally:
+            engine.users -= 1
+            engine.last_used = time.monotonic()
+            if stt is not None:
+                stt.last_used = time.monotonic()
             state["busy"] = False
             logger.info("Session closed.")
 
@@ -2390,6 +2612,11 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=9999)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7861)
+    parser.add_argument("--engine_idle_s", type=float, default=1800,
+                        help="Seconds without a conversation after which the video engine and the speech recogniser "
+                             "are dropped to free GPU memory (0: never).")
+    parser.add_argument("--preload_engine", action="store_true",
+                        help="Load the video engine and the speech recogniser at start-up instead of on first use.")
     parser.add_argument("--jpeg_quality", type=int, default=85)
     parser.add_argument("--gate_db", type=float, default=None,
                         help="Optional noise gate threshold in dBFS (e.g. -50); quieter audio is treated "
