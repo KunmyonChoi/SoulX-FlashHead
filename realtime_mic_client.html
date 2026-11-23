@@ -168,6 +168,7 @@
   @media (prefers-reduced-motion: reduce) {
     .src.asking .wire i, .src.answered .wire i { animation: none; }
   }
+.msg.tool a.tool-link { color: inherit; text-decoration: underline; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -647,6 +648,13 @@ function onTool(m) {
   } else {
     line.textContent = describeTool(m) + (m.ok ? ' (' : ' 실패 (') + (m.ms / 1000).toFixed(2) + '초)';
     line.title = m.result || '';
+    // addresses the lookup found: links to open, since the spoken reply does not read them out
+    (m.links || []).forEach(url => {
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'tool-link';
+      a.textContent = url.replace(/^https?:\/\//, '').slice(0, 80);
+      line.appendChild(document.createElement('br')); line.appendChild(a);
+    });
     line.classList.toggle('failed', !m.ok);
     if (source === 'auto') onMetric({ name: 'tool', tool: m.name, ok: m.ok, ms: m.ms });
   }

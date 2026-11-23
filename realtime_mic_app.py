@@ -776,6 +776,7 @@ SEARCH_KNOWLEDGE_SPEC = {"type": "function", "function": {
 KNOWLEDGE_TOOLS = {spec["function"]["name"] for spec in KNOWLEDGE_TOOL_SPECS} | {"search_knowledge"}
 # The user names the knowledge base: search it before the reply in either mode.
 ASKS_KNOWLEDGE = re.compile(r"지식\s?베이스|지식에서|자료에서|저장(된|해 둔|한)\s?(글|자료)|등록(된|한)\s?(글|자료)|"
+                            r"(추가|등록|저장)(된|한)\s?(지식|자료)|(새로|오늘|어제|최근)\s?(들어온|추가된|올라온|넣은)\s?(지식|자료)|"
                             r"knowledge base", re.I)
 # The user asks for another source: no knowledge-base material, and no search_knowledge for that turn.
 ASKS_ELSEWHERE = re.compile(r"인터넷|웹에서|온라인|구글|뉴스|기사|위키|긱\s?뉴스|날씨|\bweb\b|internet|news|wikipedia",
@@ -1027,6 +1028,9 @@ def create_app(args):
     toolbox = Toolbox(args.location, args.timezone, args.tool_timeout)
     knowledge = KnowledgeClient(args.weknora_url, args.weknora_key_file, args.weknora_kb,
                                 args.knowledge_name, args.knowledge_timeout)
+    # the names the user may call the knowledge base by, compared without spaces
+    knowledge_aliases = {re.sub(r"\s+", "", name.lower()) for name in [args.knowledge_name, *args.knowledge_aliases.split(",")]
+                         if name.strip()}
     if knowledge.available:
         logger.info(f"Knowledge search ready ({args.weknora_url}, '{args.knowledge_name}').")
 
@@ -1420,10 +1424,15 @@ def create_app(args):
             last_reply.update({"message": reply, "id": request_id, "pieces": [],
                                "queued": 0, "synthesised": 0, "llm_done": False, "tool_entries": tool_entries})
             live = settings["tools"]
-            # the knowledge base's own tool (documents by date) comes with the knowledge setting
-            knowledge_specs = KNOWLEDGE_TOOL_SPECS if settings["knowledge"] and knowledge.available else []
-            if knowledge_specs and settings.get("knowledge_mode") == "tool" and not (
-                    ASKS_ELSEWHERE.search(user_message["content"] or "") and not ASKS_KNOWLEDGE.search(user_message["content"] or "")):
+            # the knowledge base's own tools come with the knowledge setting, and whenever the user names the knowledge
+            # base: "오늘 추가된 지식 베이스 정리해줘" with the setting off was answered "무슨 말인지 모르겠어요" (2026-11-23)
+            said = user_message["content"] or ""
+            # or calls it by its name ("테크 트렌드 뒤져서 알려줘": the knowledge base is "Tech Trend")
+            named = bool(ASKS_KNOWLEDGE.search(said)) or any(
+                alias and alias in re.sub(r"\s+", "", said.lower()) for alias in knowledge_aliases)
+            knowledge_specs = KNOWLEDGE_TOOL_SPECS if (settings["knowledge"] or named) and knowledge.available else []
+            if knowledge_specs and (named or settings.get("knowledge_mode") == "tool") and not (
+                    ASKS_ELSEWHERE.search(user_message["content"] or "") and not named):
                 knowledge_specs = knowledge_specs + [SEARCH_KNOWLEDGE_SPEC]
             # the language of this reply: fixed by the setting, or (auto) the one the user just used
             language = settings["language"]
@@ -1553,6 +1562,8 @@ def create_app(args):
                             + ("" if ok else f": {text[:80]!r} [{getattr(toolbox, 'last_error', None)}]"))
                 await out({"type": "tool", "id": request_id, "state": "done", "name": call["name"],
                            "arguments": call["arguments"], "ok": ok, "ms": ms, "result": text[:1200],
+                           # addresses in the result, shown as links under the lookup: the reply does not read them out
+                           "links": list(dict.fromkeys(re.findall(r"https?://[^\s)\]>'\"]+", text)))[:6],
                            # how many numbered entries came back (articles, posts, documents)
                            "items": len(re.findall(r"^\s*\d+\. ", text, re.M))})
                 return {"role": "tool", "tool_name": call["name"], "content": text}
@@ -2369,6 +2380,8 @@ def parse_args():
     parser.add_argument("--weknora_kb", default="29f24b56-2379-4a82-96c7-e1b01963206c",
                         help="ID of the WeKnora knowledge base to search.")
     parser.add_argument("--knowledge_name", default="Tech Trend", help="Name of that knowledge base, as shown.")
+    parser.add_argument("--knowledge_aliases", default="테크 트렌드,테크트렌드",
+                        help="Other names the user may call the knowledge base by, comma-separated.")
     parser.add_argument("--knowledge_timeout", type=float, default=2.5,
                         help="Seconds a knowledge search may take before the reply goes ahead without it.")
     parser.add_argument("--asr_url", default="http://127.0.0.1:7790",
