@@ -362,9 +362,10 @@ def trim_silence(wav, sample_rate, threshold=0.005, margin=0.04):
 class TTSClient:
     """Minimal client for `supertonic serve`."""
 
-    def __init__(self, url, sample_rate):
+    def __init__(self, url, sample_rate, steps=None):
         self.url = url.rstrip("/")
         self.sample_rate = sample_rate
+        self.steps = steps    # synthesis steps: fewer is faster (8 -> 5: 0.70 s -> 0.46 s for 16 characters)
 
     def voices(self):
         with urllib.request.urlopen(self.url + "/v1/styles", timeout=3) as response:
@@ -375,6 +376,8 @@ class TTSClient:
         body = {"text": text, "voice": voice, "lang": lang, "response_format": "wav"}
         if speed:
             body["speed"] = speed
+        if self.steps:
+            body["steps"] = self.steps
         request = urllib.request.Request(
             self.url + "/v1/tts",
             data=json.dumps(body).encode(),
@@ -1044,7 +1047,7 @@ def create_app(args):
     pool = ThreadPoolExecutor(max_workers=1)
     engine = pool.submit(Engine, args).result()
     state = {"busy": False}
-    tts = TTSClient(args.tts_url, engine.sample_rate)
+    tts = TTSClient(args.tts_url, engine.sample_rate, args.tts_steps)
     tts_pool = ThreadPoolExecutor(max_workers=1)
     llm = OllamaClient(args.llm_url, args.llm_model)
     toolbox = Toolbox(args.location, args.timezone, args.tool_timeout)
@@ -2396,6 +2399,9 @@ def parse_args():
     parser.add_argument("--upload_dir", default="gradio_results/mic_refs")
     parser.add_argument("--tts_url", default="http://127.0.0.1:7788", help="URL of `supertonic serve`.")
     parser.add_argument("--tts_voice", default="F1")
+    parser.add_argument("--tts_steps", type=int, default=5,
+                        help="Synthesis steps of the TTS (supertonic's default is 8). 5 was judged to sound as good by "
+                             "the owner (2026-11-23) and is about a third faster, so the avatar starts sooner.")
     parser.add_argument("--tts_lang", default="ko")
     parser.add_argument("--llm_url", default="http://127.0.0.1:11434", help="URL of the Ollama server.")
     parser.add_argument("--llm_model", default="gemma4:26b",
