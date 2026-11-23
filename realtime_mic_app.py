@@ -135,11 +135,67 @@ SURPRISED = re.compile(r"^(오|와|헐|어머|엥|에이)(정말|진짜|정말�
 CUE_ACKS = ["네.", "그럼요.", "맞아요.", "정말이에요.", "네, 맞아요.", "그렇다니까요."]
 
 
+def cue_bare(text):
+    return re.sub(r"[\s.,!?？~…]", "", text or "")
+
+
+def phrase_start(heard):
+    """The part of the heard text after its last clause end (punctuation or a connecting ending): the phrase it was
+    cut in, said again from its start when the avatar goes on."""
+    bounds = [m.end() for m in re.finditer(r"[,.!?。，]\s*", heard)] + [m.end() for m in LINK_END.finditer(heard)]
+    return heard[max(bounds, default=0):].strip()
+
+
+def pitch_track(x, sr=16000):
+    """F0 every 10 ms (0 where unvoiced): normalised autocorrelation on 40 ms frames, 70-400 Hz."""
+    n, hop = int(0.04 * sr), int(0.01 * sr)
+    lo, hi = int(sr / 400), int(sr / 70)
+    if len(x) < n:
+        return np.zeros(0)
+    level = float(np.sqrt(np.mean(x ** 2))) + 1e-9
+    out = []
+    for s in range(0, len(x) - n, hop):
+        f = x[s:s + n] - x[s:s + n].mean()
+        if np.sqrt(np.mean(f ** 2)) < max(0.006, 0.3 * level):
+            out.append(0.0)
+            continue
+        spec = np.fft.rfft(f, 2 * n)
+        ac = np.fft.irfft(spec * np.conj(spec))[:n]
+        ac = ac / (ac[0] + 1e-9)
+        lag = lo + int(np.argmax(ac[lo:hi]))
+        out.append(sr / lag if ac[lag] > 0.45 else 0.0)
+    return np.array(out)
+
+
+def final_rise(audio, sr=16000):
+    """How far (semitones) the pitch climbs at the end of an utterance, above the low point of its last 25 voiced frames;
+    None when too little of it is voiced. A rising end is how "진짜요?" differs from "진짜요." when the recogniser
+    leaves out the "?"."""
+    x = np.asarray(audio, dtype=np.float32)
+    if x.size and np.abs(x).max() > 2.0:
+        x = x / 32768.0
+    f0 = pitch_track(x[-int(2.0 * sr):], sr)   # the end is what counts (trailing silence included)
+    vals = f0[f0 > 0]
+    if len(vals) < 8:
+        return None
+    med = float(np.median(vals))
+    vals = np.where(vals > 1.6 * med, vals / 2, np.where(vals < med / 1.6, vals * 2, vals))   # octave slips
+    st = np.convolve(12 * np.log2(vals / med), np.ones(3) / 3, mode="valid")   # "same" pulled the end towards 0
+    return float(st[-3:].mean() - st[-min(len(st), 25):].min())
+
+
+# Semitones of final rise that make a bare "진짜요" / "그래요" ask back. Checked on synthesised voices (6 voices,
+# 5 words): about 60% of questions climb this far and about 10% of statements do (2026-11-23).
+ASKING_RISE = 4.5
+# Only these are asked back by pitch alone: "그렇죠", "맞아요", "그래요", "그렇구나" often rise as backchannels too.
+PITCH_ASK = re.compile(r"^(오|아|와|어|엥)?(진짜|정말|진짜요|정말요|진짜로|정말로|그런가요|그런가|설마)$")
+
+
 def listener_cue(text, said):
     """("ask_back" | "repeat" | "word", word or None) for a listener's short cue to the speaker, else None.
     said: what the avatar has just been saying (a "word" cue must name something in it)."""
     asked = bool(re.search(r"[?？]\s*$", text or ""))
-    bare = re.sub(r"[\s.,!?？~…]", "", text or "")
+    bare = cue_bare(text)
     if not bare or len(bare) > 10:
         return None
     if REPEAT_ASK.match(bare) and (asked or bare.startswith(("다시", "잘못", "못들"))):
@@ -153,6 +209,47 @@ def listener_cue(text, said):
         if len(word) >= 2 and word in re.sub(r"\s+", "", said or ""):
             return ("word", word)
     return None
+
+
+# What a listener says to take the floor without asking anything yet (2026-11-23):
+#   hold     "잠깐만요", "멈춰"           -> stop, "네." and wait (no new answer)
+#   correct  "아니 그게 아니라"           -> stop and keep listening: the next utterance is joined to it
+#   dismiss  "됐어요", "그만"             -> stop, "네, 알겠습니다." and nothing more
+#   topic    "다른 얘기 하자"             -> one sentence: what to talk about instead
+#   resume   "계속하세요", "이어서 해 줘"  -> the rest of what was cut (after a hold or a question in between)
+HOLD = re.compile(r"^(아|어|자|아니)?(잠깐|잠깐만|잠시만|잠시|잠깐만기다려|기다려|기다려봐|기다려줘|기다려주세요|멈춰|스톱|스탑|"
+                  r"잠깐멈춰|잠깐스톱)(요|만요)?$")
+CORRECT = re.compile(r"^(아|어)?((아니|아니요|아뇨|아니야)?(그게아니라|그게아니고|그건아니고|그건아니라|그런게아니라|그런게아니고)|"
+                     r"(아니|아니요|아뇨|아니야)(그게|그건))$")
+DISMISS = re.compile(r"^(아|어|네|응|예)?(됐어|됐어요|됐습니다|됐고|그만|그만해|그만해요|그만하세요|그만해주세요|그만하자|"
+                     r"이제됐어요|이제됐어|알았어그만|괜찮아요됐어요|됐어그만)$")
+TOPIC = re.compile(r"(다른|딴)(얘기|이야기|애기|주제)|화제(를)?바꾸")
+RESUME = re.compile(r"^(네|예|응|좋아요|좋아)?(계속|계속해|계속해요|계속하세요|계속해주세요|계속말해|계속말씀하세요|이어서|이어서해|"
+                    r"이어서해줘|이어서해주세요|이어서말해|이어서말씀해주세요|하던얘기|하던거계속|말씀하세요|말씀계속하세요)$")
+
+
+def listener_intent(text):
+    """"hold" | "correct" | "dismiss" | "topic" | "resume" for a listener taking the floor (see above), else None."""
+    bare = cue_bare(text)
+    if not bare:
+        return None
+    if len(bare) <= 12 and HOLD.match(bare):
+        return "hold"
+    if len(bare) <= 10 and CORRECT.match(bare):
+        return "correct"
+    if len(bare) <= 12 and DISMISS.match(bare):
+        return "dismiss"
+    if len(bare) <= 14 and RESUME.match(bare):
+        return "resume"
+    if len(bare) <= 18 and TOPIC.search(bare):
+        return "topic"
+    return None
+
+
+CANNED_CUES = ("hold", "dismiss", "correct_wait")   # answered with a fixed line, no model reply
+HELD_FOR = 120.0     # seconds a cut reply's rest is kept for "계속하세요"
+CORRECT_WAIT = 4.0   # seconds "아니 그게 아니라" waits for the rest of the correction
+DETOUR_FINISH = 160  # chars: a rest up to this long is finished after a question in between; longer, it is offered
 
 
 # A short answer to a yes/no question. Said right after the question, it must not be lost as noise, as a
@@ -1490,6 +1587,8 @@ def create_app(args):
                     # cue_replies: "오 정말?", "네?", "보험료요?" get a short answer and the rest of the reply
                     # (listener_cue); off: they are new questions, as before
                     "cue_replies": True,
+                    # cue_pitch: a bare "진짜요" asks back when the voice rises at its end (final_rise)
+                    "cue_pitch": True,
                     # cue_style: "wind_down" finishes the clause before answering a cue; "cut" stops at once
                     "cue_style": "wind_down",
                     "speculative": False, "tools": False,
@@ -1619,6 +1718,10 @@ def create_app(args):
             if chat_state["task"]:
                 chat_state["task"].cancel()
                 chat_state["task"] = None
+            if last_reply["message"] is not None and last_reply["message"].get("content"):
+                # the whole reply, before it is cut to what was heard: a question that cut it is answered, then the
+                # rest is taken up again (see answer_cue, "detour")
+                cue_memory["cut"] = {"original": str(last_reply["message"]["content"]), "at": loop.time()}
             if settings["interrupt_mode"].startswith("unmute"):
                 # Everything up to the chunk being generated right now is stale for the browser.
                 first_fresh = session["seq"] + (1 if stream["in_flight"] else 0)
@@ -1775,7 +1878,7 @@ def create_app(args):
                 except Exception as e:
                     logger.info(f"GeekNews listing not loaded yet: {e!r}")
             voice = settings["voice"] or args.tts_voice
-            lines = (toolbox.fillers() if settings["tools"] else []) + (CUE_ACKS if settings.get("cue_replies") else [])
+            lines = (toolbox.fillers() if settings["tools"] else []) + (CUE_ACKS + ["네, 알겠습니다.", "네, 말씀하세요."] if settings.get("cue_replies") else [])
             for text in lines:
                 if (voice, text) not in filler_cache:
                     try:
@@ -1819,6 +1922,28 @@ def create_app(args):
             return block
 
         cue_memory = {"ack": None}   # the last short answer given to a cue, not to be used twice in a row
+        # what was left unsaid when the avatar was cut (hold, a question in between), for "계속하세요": {rest, at}
+        cue_memory["held"] = None
+        # "아니 그게 아니라" said, waiting for the rest: {text, at, task}
+        cue_memory["correction"] = None
+        cue_memory["cut"] = None          # the reply the latest stop cut: {original, at}
+
+        def drop_cut_phrase(index, heard, phrase):
+            """The history keeps the cut reply up to the end of its last whole phrase: left ending in "..., 보장", the
+            model took "보장" as said and went on with "내용과 매달 ..." (2026-11-24)."""
+            if not phrase or not heard.endswith(phrase):
+                return
+            for m in reversed(history[1:index]):
+                if m.get("role") == "assistant" and (m.get("content") or "").strip() == heard:
+                    m["content"] = heard[: len(heard) - len(phrase)].rstrip()
+                    return
+
+        def resume_note(said, rest):
+            logger.info(f"Listener resume: {said!r} ({len(rest)} chars left)")
+            first = " ".join(rest.split()[:3])
+            return (f"(시스템 안내: 사용자가 '{said}' 하고 하던 이야기를 이어 달라고 했습니다. \"네\" 같은 대답 없이 "
+                    f"\"{first}\"로 시작해 다음 내용을 자연스럽게 말하세요. 그보다 앞에서 이미 한 말은 되풀이하지 않습니다. "
+                    f"이어 말할 내용: \"{rest[:420]}\")")
 
         async def answer_cue(request, user_message, reply, queue_speech, out):
             """A listener's cue (listener_cue) while or just after the avatar spoke: a short answer at once ("그럼요."),
@@ -1828,6 +1953,24 @@ def create_app(args):
             # what was heard: the reply before this turn, already cut to what was played (apply_playback)
             index = next((k for k, m in enumerate(history) if m is user_message), len(history))
             heard = cue.get("heard")
+            if kind == "corrected":
+                return ("(시스템 안내: 사용자가 방금 앞의 말을 바로잡았습니다. 사과하거나 실수했다고 말하지 말고, 바로잡은 "
+                        "내용에 맞춰 곧바로 답하세요.)")
+            if kind == "resume" and cue_memory["held"]:
+                held = cue_memory["held"]
+                cue_memory["held"] = None
+                rest = held.get("rest") or ""
+                # what the reply in between already took up again ("아까 말씀드리던 걸 이어서 하면, ...") is not said twice
+                said_since = re.sub(r"\s+", "", next((m.get("content") or "" for m in reversed(history[1:index])
+                                                     if m.get("role") == "assistant"), ""))
+                parts = [p for p in re.split(r"(?<=[.!?。])\s+", rest) if p.strip()]
+                while parts and re.sub(r"\s+", "", parts[0])[:14] in said_since:
+                    parts.pop(0)
+                rest = " ".join(parts)
+                if not rest:
+                    return ("(시스템 안내: 사용자가 이어서 말해 달라고 했지만 끊긴 말이 없습니다. 방금 이야기를 한두 문장으로 "
+                            "마무리하거나 더 궁금한 것이 있는지 짧게 물으세요.)")
+                return resume_note(said, rest)
             if heard is None:
                 heard = next((m.get("content") or "" for m in reversed(history[1:index]) if m.get("role") == "assistant"), "")
             original = (cue.get("original") or "").strip()
@@ -1850,6 +1993,45 @@ def create_app(args):
                 # the model went on from the cut, 2026-11-23)
                 partial = last
             ack = None
+            if kind == "resume":
+                # "이어서 해 주세요" said over a reply that was already going on with it: the rest of that reply
+                if rest:
+                    phrase = phrase_start(heard) if not re.search(r"[.!?。]\s*$", heard) else ""
+                    rest = ((phrase + " ") if phrase else "") + rest
+                    drop_cut_phrase(index, heard, phrase)
+                    return resume_note(said, rest)
+                return ("(시스템 안내: 사용자가 이어서 말해 달라고 했지만 끊긴 말이 없습니다. 방금 이야기를 한두 문장으로 "
+                        "마무리하거나 더 궁금한 것이 있는지 짧게 물으세요.)")
+            if kind in ("hold", "detour"):
+                # what is left, from the start of the phrase it was cut in ("보장 내용과 ...", not "내용과 ..."); kept
+                # for a later "계속하세요" (or a yes to "이어서 해 드릴까요?") unless the reply takes it up itself
+                if rest:
+                    phrase = phrase_start(heard) if not re.search(r"[.!?。]\s*$", heard) else ""
+                    rest = ((phrase + " ") if phrase else "") + rest
+                    drop_cut_phrase(index, heard, phrase)
+                keep = rest and (kind == "hold" or len(rest) > DETOUR_FINISH)
+                cue_memory["held"] = {"rest": rest, "at": loop.time()} if keep else None
+            elif kind in ("dismiss", "topic", "correct_wait"):
+                cue_memory["held"] = None
+            if kind in CANNED_CUES:
+                ack = {"hold": "네.", "dismiss": "네, 알겠습니다.", "correct_wait": "네, 말씀하세요."}[kind]
+                queue_speech(ack, filler=True, phase="filler")
+                reply["content"] = ack
+                await out({"type": "chat_delta", "id": request.get("id"), "text": ack})
+                logger.info(f"Listener {kind}: {said!r} -> {ack!r} ({len(rest)} chars left)")
+                return None
+            if kind == "topic":
+                logger.info(f"Listener topic change: {said!r}")
+                return ("(시스템 안내: 사용자가 화제를 바꾸자고 했습니다. 앞의 이야기는 이어 가지 말고, 새 화제가 정해져 있으면 "
+                        "그 이야기를 시작하고, 아니면 어떤 이야기를 하고 싶은지 한 문장으로 짧게 물으세요.)")
+            if kind == "detour":
+                if not rest or len(rest) < 15:
+                    return None
+                logger.info(f"Question in between: {said!r} (heard {len(heard)} chars, {len(rest)} left)")
+                back = ("'아까 말씀드리던 걸 이어서 하면,'처럼 돌아가 남은 내용을 끝까지 이어 말하세요" if len(rest) <= DETOUR_FINISH else
+                        "남은 설명이 기니 '아까 하던 설명을 이어서 해 드릴까요?'라고만 물으세요")
+                return ("(시스템 안내: 사용자가 앞의 설명 도중에 끼어들어 물었습니다. 먼저 이 질문에 한두 문장으로 답하세요. 그다음 "
+                        f"{back}. 끊긴 설명의 남은 부분: \"{rest[:400]}\")")
             if kind in ("ask_back", "word"):
                 # a word asked back is taken up by name ("네, 보험료요."); a surprised "오 정말?" gets "그럼요." and the like
                 ack = f"네, {word}요." if kind == "word" else random.choice([a for a in CUE_ACKS if a != cue_memory["ack"]])
@@ -1861,15 +2043,15 @@ def create_app(args):
             if rest and cue.get("heard") is not None and not cue.get("clean"):
                 # faded inside a phrase: say that phrase again from its start, not the whole sentence ("네, 맞아요.
                 # 내시는 보험료를 ..." began mid-phrase, 2026-11-23)
-                bounds = [m.end() for m in re.finditer(r"[,.!?。，]\s*", heard)] + [m.end() for m in LINK_END.finditer(heard)]
-                phrase = heard[max(bounds, default=0):].strip()
+                phrase = phrase_start(heard)
                 go_on = (f"말이 구절 \"{phrase}…\" 중간에서 끊겼습니다. 그 앞의 말은 되풀이하지 말고, 이 구절을 처음부터 말해 남은 "
                          f"내용으로 자연스럽게 이어 가세요. 이어 갈 내용: \"{(phrase + ' ' + rest)[:420]}\"")
             elif rest:
                 go_on = ((f"말이 문장 중간에서 끊겼으니 그 문장 \"{partial}…\"을 처음부터 다시 말한 뒤, " if partial else "")
                          + f"끊긴 말의 남은 부분을 자연스럽게 이어서 말하세요. 남은 부분: \"{rest[:400]}\"")
             if kind == "ask_back":
-                body = (f"사용자가 '{said}' 하고 되물었습니다. 방금 '{ack}'라고 짧게 답했습니다. 그 말을 되풀이하지 말고, "
+                body = (f"사용자가 '{said}' 하고 되물었습니다. 방금 '{ack}'라고 짧게 답했습니다. 그 말이나 '네', '맞아요' 같은 "
+                        "대답을 또 하지 말고, "
                         + (go_on or "방금 한 말을 한두 문장으로 뒷받침하세요."))
             elif kind == "repeat":
                 body = (f"사용자가 '{said}' 하며 잘 못 알아들었습니다. 마지막 문장 \"{last}\"를 조금 더 또렷하고 짧게 다시 말한 "
@@ -2063,6 +2245,12 @@ def create_app(args):
                         truncation["pending"] = None
                 if request.get("cue") and cue_state["note"] is None:
                     cue_state["note"] = await answer_cue(request, user_message, reply, queue_speech, out)
+                    if request["cue"]["kind"] in CANNED_CUES:
+                        # "잠깐만요" -> "네." and nothing more: the model would have started a new answer
+                        last_reply["llm_done"] = True
+                        await out({"type": "llm", "id": request_id, "state": "done", "chars": len(reply["content"]),
+                                   "ms": 0})
+                        return
                 can_call = bool(live or knowledge_specs) and await llm.supports(model, "tools")
                 started = time.perf_counter()
                 # "두 번째 글 더 자세히" points at the conversation, not at a topic: searched as it is, it
@@ -2333,16 +2521,81 @@ def create_app(args):
                     await send_json({"type": "metric", "name": "hallucination_ignored", "text": text})
                     await update_listen_state()
                     return
+            correction = cue_memory["correction"]
+            joined_correction = False
+            if correction is not None and text and text.strip():
+                # the rest of "아니 그게 아니라 ...": one utterance with its opening
+                cue_memory["correction"] = None
+                if correction["task"]:
+                    correction["task"].cancel()
+                if loop.time() - correction["at"] < CORRECT_WAIT + 4.0:
+                    text = f"{correction['text'].strip()} {text.strip()}"
+                    joined_correction = True
             answering = (expecting_answer() and (only_tail() or not avatar_busy())) or (
                 began_at is not None and answers_a_question(began_at))
             one_word_answer = answering and bool(SHORT_ANSWER.match(_bare(text))) and not re.search(r"[?？]\s*$", text)
+            echo = in_tail and is_echo(text, last_agent_text())
             cue = listener_cue(text, last_agent_text()) if settings.get("cue_replies", True) and last_agent_text() else None
-            if in_tail and is_echo(text, last_agent_text()):
+            if (cue is None and not echo and settings.get("cue_replies", True) and settings.get("cue_pitch", True)
+                    and last_agent_text() and not re.search(r"[?？]", text or "") and PITCH_ASK.match(_bare(text))
+                    and not one_word_answer):
+                # "진짜요." / "그래요" without the "?": asked back if the voice rose at the end (else a backchannel)
+                try:
+                    rise = await asyncio.to_thread(final_rise, audio)
+                except Exception as e:
+                    logger.warning(f"Pitch check failed: {e!r}")
+                    rise = None
+                logger.info(f"Final rise of {text!r}: {rise if rise is None else round(rise, 1)} semitones")
+                if rise is not None and rise >= ASKING_RISE:
+                    cue = ("ask_back", None)
+            intent = None
+            if cue is None and not echo and settings.get("cue_replies", True) and last_agent_text():
+                intent = listener_intent(text)
+                held = cue_memory["held"]
+                if held and loop.time() - held["at"] > HELD_FOR:
+                    cue_memory["held"] = held = None
+                cut = cue_memory["cut"]
+                cutting = avatar_busy() or (cut is not None and began_at is not None and cut["at"] >= began_at)
+                if intent == "resume" and not held and not cutting:
+                    intent = None   # "계속하세요" with nothing cut: an ordinary turn
+                if one_word_answer and intent != "resume":
+                    # a yes to "아까 하던 설명을 이어서 해 드릴까요?" goes on with it; other short answers stay answers
+                    intent = "resume" if held and "이어서" in last_agent_text()[-60:] and not re.match(
+                        r"^(아니|아뇨|아니요|괜찮아|됐어)", _bare(text)) else None
+            if intent == "correct":
+                # "아니 그게 아니라": stop, say nothing and wait for the rest of the correction
+                await cancel_speech()
+                await send_json({"type": "metric", "name": "correction_open", "text": text})
+
+                async def nothing_followed(opening=text):
+                    await asyncio.sleep(CORRECT_WAIT)
+                    if cue_memory["correction"] is None or listen["transcribing"] or (endpointer and endpointer.in_speech):
+                        return
+                    cue_memory["correction"] = None
+                    if (chat_state["task"] and not chat_state["task"].done()) or avatar_busy():
+                        return   # something else (a typed message) has taken the turn meanwhile
+                    listen["turn"] += 1
+                    request = {"id": f"voice-{listen['turn']}", "text": opening, "language": heard_in,
+                               "cue": {"kind": "correct_wait", "original": ""}}
+                    await send_json({"type": "transcript", "id": request["id"], "text": opening, "language": heard_in,
+                                     "engine": settings["stt"]})
+                    chat_state["task"] = asyncio.create_task(chat(generation["n"], request))
+                cue_memory["correction"] = {"text": text, "at": loop.time(), "task": None}
+                cue_memory["correction"]["task"] = asyncio.create_task(nothing_followed())
+                logger.info(f"Listener correction begun: {text!r}, waiting for the rest")
+                await update_listen_state()
+                return
+            if echo:
                 await send_json({"type": "metric", "name": "echo_ignored", "text": text})
-            elif over_avatar and is_backchannel(text) and not one_word_answer and cue is None:
+            elif over_avatar and is_backchannel(text) and not one_word_answer and cue is None and intent is None:
                 # the listener was only signalling attention: keep talking, say nothing about it
                 await send_json({"type": "metric", "name": "backchannel_ignored", "text": text})
-            elif len(text) >= 2 or one_word_answer or cue is not None:
+            elif len(text) >= 2 or one_word_answer or cue is not None or intent is not None:
+                # the avatar is cut by this utterance: now, or already while it was being said (a long question
+                # stops it after BARGE_IN_SECONDS, before it is transcribed)
+                cut = cue_memory["cut"]
+                cut_by_it = cut if cut and began_over_avatar and began_at is not None and cut["at"] >= began_at else None
+                cut_off = (avatar_busy() and not only_tail() and last_reply["message"] is not None) or cut_by_it is not None
                 if over_avatar and auto["active"] and avatar_busy():
                     await report_interrupt()
                 listen["turn"] += 1
@@ -2356,10 +2609,20 @@ def create_app(args):
                     # turn, but it is a listener's noise, not a question (see llm_messages)
                     "backchannel": began_over_avatar and is_backchannel(text) and not one_word_answer,
                 }
+                original = ((last_reply["message"] or {}).get("content") or (cut_by_it or {}).get("original")
+                            or last_agent_text())
                 if cue is not None:
                     # what the avatar had said or was about to say, before the cut: the rest is worked out from it
-                    request["cue"] = {"kind": cue[0], "word": cue[1],
-                                      "original": (last_reply["message"] or {}).get("content") or last_agent_text()}
+                    request["cue"] = {"kind": cue[0], "word": cue[1], "original": original}
+                elif intent is not None:
+                    request["cue"] = {"kind": intent, "original": original if cut_off else ""}
+                elif joined_correction:
+                    request["cue"] = {"kind": "corrected", "original": ""}
+                elif cut_off and not one_word_answer and not request["backchannel"]:
+                    # a question in between: answered, then back to what was cut (or an offer to go on)
+                    request["cue"] = {"kind": "detour", "original": original}
+                if "cue" not in request or request["cue"]["kind"] in ("corrected",):
+                    cue_memory["held"] = None   # a new subject: an old cut is not taken up again by "계속하세요"
                 await send_json({"type": "transcript", "id": request["id"], "text": text,
                                  "stt_ms": request["stt_ms"], "language": heard_in, "engine": settings["stt"]})
                 if (cue is not None and cue[0] in ("ask_back", "word") and settings.get("cue_style") == "wind_down"
@@ -2708,6 +2971,7 @@ def create_app(args):
                     request["phase"] = "reply"
                     requests.put_nowait((generation["n"], request))
                 elif request.get("type") == "chat":
+                    cue_memory["correction"] = None   # a typed message ends a spoken "아니 그게 아니라"
                     await cancel_speech()  # a new message interrupts whatever is being said
                     chat_state["task"] = asyncio.create_task(chat(generation["n"], request))
                 elif request.get("type") == "clear":

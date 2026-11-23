@@ -336,6 +336,8 @@
         <input type="checkbox" id="cue-replies" checked> 되묻는 말에 짧게 받고 이어 말하기</label>
       <label title="켜면 하던 구절(쉼표나 문장 끝)까지 마저 말한 뒤 받고, 끄면 바로 끊고 받습니다.">
         <input type="checkbox" id="cue-wind" checked> 하던 구절을 마치고 받기</label>
+      <label title="물음표 없이 적힌 '진짜요', '그래요'도 끝 억양이 올라가면 되묻는 말로 받습니다.">
+        <input type="checkbox" id="cue-pitch" checked> 억양으로 되묻기 판단</label>
     </div>
   </div>
 
@@ -727,6 +729,7 @@ function sendConfig() {
     interrupt_mode: $('interrupt-mode').value,
     cue_replies: $('cue-replies').checked,
     cue_style: $('cue-wind').checked ? 'wind_down' : 'cut',
+    cue_pitch: $('cue-pitch').checked,
     speculative: $('speculative').checked,
     tools: $('tools').checked,
     language: $('language').value,
@@ -1202,7 +1205,7 @@ $('image').onchange = async e => {
 
 document.querySelectorAll('input[name=source]').forEach(el => { el.onchange = applySource; });
 $('speak').onclick = speak;
-['voice', 'model', 'barge', 'interrupt-mode', 'cue-replies', 'cue-wind', 'speculative', 'tools', 'knowledge', 'knowledge-threshold', 'knowledge-mode', 'language', 'length', 'endpoint', 'stt'].forEach(id => { $(id).onchange = sendConfig; });
+['voice', 'model', 'barge', 'interrupt-mode', 'cue-replies', 'cue-wind', 'cue-pitch', 'speculative', 'tools', 'knowledge', 'knowledge-threshold', 'knowledge-mode', 'language', 'length', 'endpoint', 'stt'].forEach(id => { $(id).onchange = sendConfig; });
 $('clear').onclick = () => { if (ws && running) ws.send(JSON.stringify({ type: 'clear' })); };
 $('text').onkeydown = e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); speak(); }
