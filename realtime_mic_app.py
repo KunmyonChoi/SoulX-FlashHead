@@ -282,9 +282,24 @@ class EngineHolder:
     # -- loading -------------------------------------------------------------------------------
     def _load(self):
         started = time.perf_counter()
-        engine = Engine(self.args)
-        if self.image[0] != self.args.cond_image:
-            engine.set_image(*self.image)
+        try:
+            engine = Engine(self.args)
+            if self.image[0] != self.args.cond_image:
+                engine.set_image(*self.image)
+        except BaseException as e:
+            # the traceback holds the half-built engine (v2 kept 8 GB this way after running out of memory,
+            # 2026-11-23): drop it, give the memory back, raise the message only
+            message = f"{type(e).__name__}: {e}"
+            e.__traceback__ = None
+            del e
+            import gc
+            try:
+                torch._dynamo.reset()
+            except Exception:
+                pass
+            gc.collect()
+            torch.cuda.empty_cache()
+            raise RuntimeError(message) from None
         if engine.slice_frames != self.slice_frames:      # the model disagrees with the geometry assumed above
             logger.warning(f"Chunk length is {engine.slice_frames} frames, not {self.slice_frames}: using the model's.")
             self.motion_frames_num, self.slice_frames = engine.motion_frames_num, engine.slice_frames

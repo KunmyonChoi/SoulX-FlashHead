@@ -164,6 +164,9 @@ class VoiceSession:
         # reply: the interrupted reply as it stood when it was cut off; task: its (cancelled) task
         self.truncation = {"pending": None, "reply": None, "task": None}
         self.kick = asyncio.Event()   # wakes the main loop right after a flush
+        # the avatar is resting (the last chunk had no sound and none is waiting): speech that arrives now starts
+        # at once instead of on the next 0.96 s beat (as in v1, 2026-11-23: the beat wait was ~0.4 s of 1.7 s)
+        self.idle = True
         self.wake = asyncio.Event()   # voice only: there is speech to send
         self.play_end = 0.0           # when the audio sent so far has finished playing (estimate)
         self.endpointer = None
@@ -327,6 +330,9 @@ class VoiceSession:
                     self.last_reply["pieces"].append({"text": sentence, "start": start, "end": start + len(pcm)})
                 self.speech.extend(pcm)
                 self.speech.extend(self.sentence_gap)
+                if self.avatar and self.idle and not self.hold:
+                    self.idle = False
+                    self.kick.set()          # make the next chunk now; the page cuts the resting one it plays
                 self.wake.set()
             if request.get("reply") is not None and request.get("reply") is self.last_reply["token"]:
                 self.last_reply["synthesised"] += 1
@@ -1045,6 +1051,7 @@ class VoiceSession:
                 clock_start, index = loop.time(), 0
             pcm = b"" if self.hold else bytes(self.speech[:self.slice_bytes])
             del self.speech[:len(pcm)]
+            self.idle = not pcm and not self.speech
             await self._send_chunk(pcm, sent * self.slice_samples)
             index += 1
             sent += 1

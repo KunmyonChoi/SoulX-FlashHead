@@ -820,3 +820,40 @@ def test_avatar_engine_that_fails_to_load_is_reported_and_frees_the_seat():
     holder, ws = asyncio.run(main())
     assert [m["type"] for m in ws.json] == ["error"] and "CUDA out of memory" in ws.json[0]["message"]
     assert not holder.busy and not holder.loaded
+
+
+def test_a_failed_load_keeps_nothing_alive_and_says_why():
+    # 2026-11-23: a load that ran out of GPU memory left 8 GB held, because the stored exception's traceback kept
+    # the half-built engine. Here the "engine" is an object we can watch with a weak reference.
+    import gc
+    import weakref
+    seen = []
+
+    class Big:
+        pass
+
+    def loader(image):
+        partial = Big()
+        seen.append(weakref.ref(partial))
+        raise RuntimeError("CUDA out of memory")
+
+    async def main():
+        holder = avatar_module.AvatarHolder(loader=loader)
+        try:
+            await holder.acquire()
+        except Exception as e:
+            return holder, e
+        return holder, None
+
+    holder, error = asyncio.run(main())
+    gc.collect()
+    assert isinstance(error, avatar_module.AvatarUnavailable) and "out of memory" in str(error)
+    assert error.__traceback__ is None or all(f.f_code.co_name != "loader" for f in _frames(error.__traceback__))
+    assert seen and seen[0]() is None                      # the half-built engine is gone
+    assert holder.status()["state"] in ("unloaded", "failed") and "out of memory" in (holder.status().get("error") or "")
+
+
+def _frames(tb):
+    while tb is not None:
+        yield tb.tb_frame
+        tb = tb.tb_next

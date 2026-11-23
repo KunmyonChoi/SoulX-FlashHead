@@ -34,6 +34,26 @@ logger = logging.getLogger("agentkit.voice")
 DEFAULT_IMAGE = "examples/girl.png"
 
 
+
+
+def _free_gpu(why):
+    """Gives back the GPU memory nothing refers to any more (compiled graphs keep models alive until reset)."""
+    import gc
+    try:
+        import torch
+        before = torch.cuda.memory_reserved()
+        try:
+            torch._dynamo.reset()
+        except Exception:
+            pass
+        gc.collect()
+        torch.cuda.empty_cache()
+        logger.info("GPU memory %s: %.1f GB -> %.1f GB held by this process.", why, before / 2**30,
+                    torch.cuda.memory_reserved() / 2**30)
+    except Exception as e:
+        gc.collect()
+        logger.info("GPU memory %s (%s).", why, e)
+
 class AvatarBusy(Exception):
     """Another avatar session is using the video engine."""
 
@@ -110,9 +130,16 @@ class AvatarHolder:
         try:
             engine = self._loader(image)
         except BaseException as e:
+            message = str(e) or type(e).__name__
             with self._guard:
-                self._load, self._error = None, str(e)
-            raise
+                self._load, self._error = None, message
+            # The traceback holds the frames of the half-built engine, and the Future would keep the exception:
+            # a load that ran out of memory left 8 GB on the GPU with the state "unloaded" (2026-11-23). Drop it,
+            # give the memory back, and raise a plain error with the message only.
+            e.__traceback__ = None
+            del e
+            _free_gpu("after a failed load")
+            raise AvatarUnavailable(message) from None
         with self._guard:
             self.engine, self.image = engine, image
             self.load_seconds = time.time() - self._load_started

@@ -563,6 +563,19 @@ async function playAudio(buf) {
 }
 function schedule(seq, pcm, rate, duration, pictures) {
   const now = actx.currentTime;
+  // The first chunk of speech after a rest comes at once (not on the next beat): cut the resting chunk that is
+  // playing or waiting, and start speaking now (as in v1, realtime_mic_client.html).
+  let silent = true;
+  for (let i = 0; i < pcm.length; i += 4) if (pcm[i] > 64 || pcm[i] < -64) { silent = false; break; }
+  if (pictures.length && !silent) {
+    const ahead = nodes.filter(n => n.t0 + n.duration > now);
+    if (ahead.length && ahead.every(n => n.silent)) {
+      ahead.forEach(n => { try { n.node.stop(now); } catch (e) { /* ended */ } });
+      nodes = nodes.filter(n => !ahead.includes(n));
+      frames = frames.filter(f => { if (f.t > now) { f.p.close(); return false; } return true; });
+      playHead = now;
+    }
+  }
   if (pictures.length && playHead - now > 2.2 * duration) { pictures.forEach(p => p.close()); return; }   // fell behind
   const t0 = Math.max(playHead, now + 0.06);
   playHead = t0 + duration;
@@ -570,7 +583,7 @@ function schedule(seq, pcm, rate, duration, pictures) {
     const b = actx.createBuffer(1, pcm.length, rate), ch = b.getChannelData(0);
     for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
     const node = actx.createBufferSource(); node.buffer = b; node.connect(out); node.start(t0);
-    nodes = nodes.filter(n => n.t0 + n.duration > now - 1); nodes.push({ node, seq, t0, duration });
+    nodes = nodes.filter(n => n.t0 + n.duration > now - 1); nodes.push({ node, seq, t0, duration, silent });
   }
   const lag = actx.outputLatency || 0;
   pictures.forEach((p, i) => frames.push({ t: t0 + lag + i / FPS(), p }));

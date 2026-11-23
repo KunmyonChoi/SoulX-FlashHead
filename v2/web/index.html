@@ -1453,6 +1453,19 @@ async function onMessage(data) {
 // Puts one chunk on the WebAudio clock: sound now or right after the previous chunk, frames alongside.
 function schedule(seq, pcm, rate, duration, bitmaps, canSkip) {
   const now = ctx.currentTime;
+  // The first chunk of speech after a rest comes at once (not on the next beat): cut the resting chunk that is
+  // playing or waiting, and start speaking now (as in v1, realtime_mic_client.html).
+  let silent = true;
+  for (let i = 0; i < pcm.length; i += 4) if (pcm[i] > 64 || pcm[i] < -64) { silent = false; break; }
+  if (canSkip && !silent) {
+    const ahead = scheduled.filter(item => item.t0 + item.duration > now);
+    if (ahead.length && ahead.every(item => item.silent)) {
+      ahead.forEach(item => { try { item.node.stop(now); } catch (err) { /* ended */ } });
+      scheduled = scheduled.filter(item => !ahead.includes(item));
+      frames = frames.filter(f => { if (f.t > now) { f.bitmap.close(); return false; } return true; });
+      playHead = now;
+    }
+  }
   // Video only: more than two chunks already queued means we fell behind, so skip this one to catch up.
   if (canSkip && playHead - now > 2.2 * duration) { bitmaps.forEach(b => b.close()); return null; }
   const t0 = Math.max(playHead, now + 0.06);
@@ -1467,7 +1480,7 @@ function schedule(seq, pcm, rate, duration, bitmaps, canSkip) {
     node.connect(outputGain);
     node.start(t0);
     scheduled = scheduled.filter(item => item.t0 + item.duration > now - 1);
-    scheduled.push({ seq, node, t0, duration });
+    scheduled.push({ seq, node, t0, duration, silent });
   }
   const latency = ctx.outputLatency || 0;
   dropStaleFrames(now);
