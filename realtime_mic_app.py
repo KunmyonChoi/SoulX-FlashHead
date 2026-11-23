@@ -118,6 +118,36 @@ def is_backchannel(text):
     return bool(BACKCHANNEL.match(bare)) or (len(bare) <= 10 and bool(BACKCHANNEL_PHRASE.match(bare)))
 
 
+# What a listener says to the speaker without taking the turn, and how the avatar answers it (2026-11-23):
+#   ask_back  "오 정말?", "그래?", "진짜요?"  -> a short "그럼요." at once, then the rest of what it was saying
+#   repeat    "네?", "뭐라고요?", "다시요"     -> the last sentence again, then the rest
+#   word      "보험료요?" (a word it just said) -> that word in one sentence, then the rest
+ASK_BACK = re.compile(r"^(오|아|와|에이|헐|어|엥)?(정말|진짜|그래|그래요|그런가요|그런가|그렇다고요|그렇다고|맞아|맞아요|설마|"
+                      r"진짜로|정말로|정말요|진짜요|그렇구나|그래서요|그래서|어머|그렇죠)$")
+REPEAT_ASK = re.compile(r"^(네|예|응|뭐|뭐라고|뭐라구|뭐라고요|뭐라구요|뭐요|다시|다시요|다시한번|잘못들었어요|못들었어요|네뭐라고요)$")
+SURPRISED = re.compile(r"^(오|와|헐|어머|엥|에이)(정말|진짜|정말요|진짜요|정말로|진짜로)$|^(설마|진짜로|정말로)$")
+CUE_ACKS = ["네.", "그럼요.", "맞아요.", "정말이에요.", "네, 맞아요.", "그렇다니까요."]
+
+
+def listener_cue(text, said):
+    """("ask_back" | "repeat" | "word", word or None) for a listener's short cue to the speaker, else None.
+    said: what the avatar has just been saying (a "word" cue must name something in it)."""
+    asked = bool(re.search(r"[?？]\s*$", text or ""))
+    bare = re.sub(r"[\s.,!?？~…]", "", text or "")
+    if not bare or len(bare) > 10:
+        return None
+    if REPEAT_ASK.match(bare) and (asked or bare.startswith(("다시", "잘못", "못들"))):
+        return ("repeat", None)
+    # surprise words ask back even when the recogniser drops the "?" ("오 정말." for "오 정말?", 2026-11-23)
+    if ASK_BACK.match(bare) and (asked or SURPRISED.match(bare)):
+        return ("ask_back", None)
+    if asked:
+        word = re.sub(r"(이라고요|라고요|이에요|예요|이요|요)$", "", bare)
+        if len(word) >= 2 and word in re.sub(r"\s+", "", said or ""):
+            return ("word", word)
+    return None
+
+
 # A short answer to a yes/no question. Said right after the question, it must not be lost as noise, as a
 # listener's backchannel, or as the avatar's own echo.
 SHORT_ANSWER = re.compile(r"^(네|예|응|어|좋아|좋아요|좋습니다|그래|그래요|그러죠|맞아|맞아요|오케이|알겠어요|알겠습니다|"
@@ -241,7 +271,8 @@ AUTO_DECIDE_PROMPT = (
     "- wait: 계속 듣는다.\n"
     "- backchannel: 듣고 있다는 추임새를 넣는다. 이번 길이는 {length}. 들은 말에 맞는 반응을 고른다: 짧은 대답('네', '음', "
     "'응'), 공감('맞아요', '그렇죠'), 놀람('오', '와 정말요'), 이해('아하', '그렇구나'), 들은 내용에 맞춘 한마디('아 그게 이전이군요', "
-    "'보험료 얘기네요'). 내가 이미 한 추임새({used})와 같은 말은 쓰지 않는다.\n"
+    "'보험료 얘기네요'), 가끔은 되묻기('오 정말?', '진짜요?', '그래요?', 방금 들은 단어로 '보험료요?', 잘 안 들리면 '네?'). "
+    "내가 이미 한 추임새({used})와 같은 말은 쓰지 않는다.\n"
     "- interrupt: 상대의 말을 끊고 끼어든다. text는 되묻거나 반박하거나 화제를 바꾸는 한 문장.\n"
     "성향: {tendency}\n"
     "JSON으로만 답하세요."
@@ -1445,6 +1476,9 @@ def create_app(args):
         chat_state = {"task": None}
         synth_state = {"busy": False}
         settings = {"voice": None, "model": None, "barge_in": False, "interrupt_mode": "unmute_gate",
+                    # cue_replies: "오 정말?", "네?", "보험료요?" get a short answer and the rest of the reply
+                    # (listener_cue); off: they are new questions, as before
+                    "cue_replies": True,
                     "speculative": False, "tools": False,
                     # knowledge: search the WeKnora knowledge base before each reply
                     # knowledge_threshold: rerank score a chunk needs to be put into the prompt
@@ -1639,12 +1673,14 @@ def create_app(args):
 
         async def warm_fillers():
             """Synthesises the "one moment" lines for the current voice ahead of time."""
-            try:
-                await toolbox.geeknews_posts()  # nine page loads: better now than inside the first question
-            except Exception as e:
-                logger.info(f"GeekNews listing not loaded yet: {e!r}")
+            if settings["tools"]:
+                try:
+                    await toolbox.geeknews_posts()  # page loads: better now than inside the first question
+                except Exception as e:
+                    logger.info(f"GeekNews listing not loaded yet: {e!r}")
             voice = settings["voice"] or args.tts_voice
-            for text in toolbox.fillers():
+            lines = (toolbox.fillers() if settings["tools"] else []) + (CUE_ACKS if settings.get("cue_replies") else [])
+            for text in lines:
                 if (voice, text) not in filler_cache:
                     try:
                         filler_cache[(voice, text)] = await loop.run_in_executor(
@@ -1685,6 +1721,50 @@ def create_app(args):
             await out({"type": "knowledge", "id": request_id, "state": "done", "ok": True, "ms": ms, "top": top,
                        "threshold": threshold, "sources": titles, "found": len(hits)})
             return block
+
+        cue_memory = {"ack": None}   # the last short answer given to a cue, not to be used twice in a row
+
+        async def answer_cue(request, user_message, reply, queue_speech, out):
+            """A listener's cue (listener_cue) while or just after the avatar spoke: a short answer at once ("그럼요."),
+            then the note that has the model go on with the rest of what was cut. Returns the note."""
+            cue = request["cue"]
+            kind, word, said = cue["kind"], cue.get("word"), str(request.get("text", "")).strip()
+            # what was heard: the reply before this turn, already cut to what was played (apply_playback)
+            index = next((k for k, m in enumerate(history) if m is user_message), len(history))
+            heard = next((m.get("content") or "" for m in reversed(history[1:index]) if m.get("role") == "assistant"), "")
+            original = (cue.get("original") or "").strip()
+            heard = heard.strip()
+            rest = original[len(heard):].strip() if heard and original.startswith(heard) else ""
+            sentences = [s for s in re.split(r"(?<=[.!?。])\s+", heard) if s.strip()]
+            last = sentences[-1] if sentences else heard
+            partial = None
+            if rest and sentences and not re.search(r"[.!?。]\s*$", heard):
+                # cut inside a sentence: say that sentence again from its start ("그럼요. 살펴보고 ..." was heard when
+                # the model went on from the cut, 2026-11-23)
+                partial = last
+            ack = None
+            if kind in ("ask_back", "word"):
+                # a word asked back is taken up by name ("네, 보험료요."); a surprised "오 정말?" gets "그럼요." and the like
+                ack = f"네, {word}요." if kind == "word" else random.choice([a for a in CUE_ACKS if a != cue_memory["ack"]])
+                cue_memory["ack"] = ack
+                queue_speech(ack, filler=True, phase="filler")      # cached: heard before the model has a word
+                reply["content"] = ack + " "
+                await out({"type": "chat_delta", "id": request.get("id"), "text": ack + " "})
+            go_on = None
+            if rest:
+                go_on = ((f"말이 문장 중간에서 끊겼으니 그 문장 \"{partial}…\"을 처음부터 다시 말한 뒤, " if partial else "")
+                         + f"끊긴 말의 남은 부분을 자연스럽게 이어서 말하세요. 남은 부분: \"{rest[:400]}\"")
+            if kind == "ask_back":
+                body = (f"사용자가 '{said}' 하고 되물었습니다. 방금 '{ack}'라고 짧게 답했습니다. 그 말을 되풀이하지 말고, "
+                        + (go_on or "방금 한 말을 한두 문장으로 뒷받침하세요."))
+            elif kind == "repeat":
+                body = (f"사용자가 '{said}' 하며 잘 못 알아들었습니다. 마지막 문장 \"{last}\"를 조금 더 또렷하고 짧게 다시 말한 "
+                        "뒤 " + (go_on or "말을 마치세요."))
+            else:
+                body = (f"사용자가 '{word}'를 되물었습니다. 방금 '{ack}'라고 답했습니다. '{word}'가 무엇인지 한 문장으로 짚은 뒤 "
+                        + (go_on or "말을 마치세요."))
+            logger.info(f"Listener cue {kind}: {said!r} (heard {len(heard)} chars, {len(rest)} left)")
+            return f"(시스템 안내: {body} 사과하거나 질문을 칭찬하지 마세요.)"
 
         async def chat(gen, request, out=None):
             """Streams an LLM reply and queues it for speech piece by piece.
@@ -1735,6 +1815,7 @@ def create_app(args):
             tool_ms = None
             jobs = []
             reference = ""  # knowledge-base text for this question; in the prompt, not in the history
+            cue_state = {"note": None}   # the note for a listener's cue (answer_cue), made once the cut is known
 
             today = datetime.now(toolbox.tz).date()
             clock = toolbox.clock()  # fixed for this reply, so its later passes reuse the prompt cache
@@ -1771,6 +1852,8 @@ def create_app(args):
                         message = {**message, "content": f"{clock}\n{content}" if live else content}
                     if message is user_message and request.get("backchannel"):
                         message = {**message, "content": message["content"] + "\n" + BACKCHANNEL_NOTE}
+                    if message is user_message and cue_state["note"]:
+                        message = {**message, "content": message["content"] + "\n" + cue_state["note"]}
                     if message is not reply:
                         messages.append(message)
                 return messages + nudge
@@ -1864,6 +1947,8 @@ def create_app(args):
                         pass
                     if truncation["pending"] is pending:
                         truncation["pending"] = None
+                if request.get("cue") and cue_state["note"] is None:
+                    cue_state["note"] = await answer_cue(request, user_message, reply, queue_speech, out)
                 can_call = bool(live or knowledge_specs) and await llm.supports(model, "tools")
                 started = time.perf_counter()
                 # "두 번째 글 더 자세히" points at the conversation, not at a topic: searched as it is, it
@@ -2136,13 +2221,14 @@ def create_app(args):
                     return
             answering = (expecting_answer() and (only_tail() or not avatar_busy())) or (
                 began_at is not None and answers_a_question(began_at))
-            one_word_answer = answering and bool(SHORT_ANSWER.match(_bare(text)))
+            one_word_answer = answering and bool(SHORT_ANSWER.match(_bare(text))) and not re.search(r"[?？]\s*$", text)
+            cue = listener_cue(text, last_agent_text()) if settings.get("cue_replies", True) and last_agent_text() else None
             if in_tail and is_echo(text, last_agent_text()):
                 await send_json({"type": "metric", "name": "echo_ignored", "text": text})
-            elif over_avatar and is_backchannel(text) and not one_word_answer:
+            elif over_avatar and is_backchannel(text) and not one_word_answer and cue is None:
                 # the listener was only signalling attention: keep talking, say nothing about it
                 await send_json({"type": "metric", "name": "backchannel_ignored", "text": text})
-            elif len(text) >= 2 or one_word_answer:
+            elif len(text) >= 2 or one_word_answer or cue is not None:
                 if over_avatar and auto["active"] and avatar_busy():
                     await report_interrupt()
                 listen["turn"] += 1
@@ -2156,6 +2242,10 @@ def create_app(args):
                     # turn, but it is a listener's noise, not a question (see llm_messages)
                     "backchannel": began_over_avatar and is_backchannel(text) and not one_word_answer,
                 }
+                if cue is not None:
+                    # what the avatar had said or was about to say, before the cut: the rest is worked out from it
+                    request["cue"] = {"kind": cue[0], "word": cue[1],
+                                      "original": (last_reply["message"] or {}).get("content") or last_agent_text()}
                 await send_json({"type": "transcript", "id": request["id"], "text": text,
                                  "stt_ms": request["stt_ms"], "language": heard_in, "engine": settings["stt"]})
                 await cancel_speech()
@@ -2476,7 +2566,7 @@ def create_app(args):
                     continue
                 if request.get("type") == "config":
                     settings.update({k: request[k] for k in settings if k in request})
-                    if settings["tools"]:
+                    if settings["tools"] or settings.get("cue_replies"):
                         background.add(task := asyncio.create_task(warm_fillers()))
                         task.add_done_callback(background.discard)
                     if settings["knowledge"] and knowledge.available and not knowledge_warmer["task"]:

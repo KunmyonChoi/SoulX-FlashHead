@@ -332,6 +332,8 @@
           <option value="unmute_gate" selected>즉시 끊되, 짧은 맞장구에는 끊지 않음</option>
         </select>
       </label>
+      <label title="'오 정말?', '네?', '보험료요?'처럼 되묻는 짧은 말에 '그럼요'처럼 짧게 받은 뒤 하던 말을 이어 갑니다. 끄면 새 질문으로 받습니다.">
+        <input type="checkbox" id="cue-replies" checked> 되묻는 말에 짧게 받고 이어 말하기</label>
     </div>
   </div>
 
@@ -721,6 +723,7 @@ function sendConfig() {
     model: $('model').value || null,
     barge_in: $('barge').checked,
     interrupt_mode: $('interrupt-mode').value,
+    cue_replies: $('cue-replies').checked,
     speculative: $('speculative').checked,
     tools: $('tools').checked,
     language: $('language').value,
@@ -1176,7 +1179,7 @@ $('image').onchange = async e => {
 
 document.querySelectorAll('input[name=source]').forEach(el => { el.onchange = applySource; });
 $('speak').onclick = speak;
-['voice', 'model', 'barge', 'interrupt-mode', 'speculative', 'tools', 'knowledge', 'knowledge-threshold', 'knowledge-mode', 'language', 'length', 'endpoint', 'stt'].forEach(id => { $(id).onchange = sendConfig; });
+['voice', 'model', 'barge', 'interrupt-mode', 'cue-replies', 'speculative', 'tools', 'knowledge', 'knowledge-threshold', 'knowledge-mode', 'language', 'length', 'endpoint', 'stt'].forEach(id => { $(id).onchange = sendConfig; });
 $('clear').onclick = () => { if (ws && running) ws.send(JSON.stringify({ type: 'clear' })); };
 $('text').onkeydown = e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); speak(); }
