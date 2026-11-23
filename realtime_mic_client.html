@@ -965,6 +965,17 @@ async function onMessage(data) {
 
   const duration = frameCount / cfg.fps;
   const now = ctx.currentTime;
+  // The first chunk of speech after a rest: the server made it at once (not on the next beat), so cut the resting
+  // chunk that is playing or waiting and start speaking now.
+  let silent = true;
+  for (let i = 0; i < pcm.length; i += 4) if (pcm[i] > 64 || pcm[i] < -64) { silent = false; break; }
+  const ahead = scheduled.filter(item => item.t0 + item.duration > now);
+  if (!silent && ahead.length && ahead.every(item => item.silent)) {
+    ahead.forEach(item => { try { item.node.stop(now); } catch (err) { /* ended */ } });
+    scheduled = scheduled.filter(item => !ahead.includes(item));
+    frames = frames.filter(f => { if (f.t > now) { f.bitmap.close(); return false; } return true; });
+    playHead = now;
+  }
   // More than two chunks already queued: we fell behind earlier, so skip this one to catch up.
   if (playHead - now > 2.2 * duration) { bitmaps.forEach(b => b.close()); return; }
   const t0 = Math.max(playHead, now + 0.06);
@@ -977,7 +988,7 @@ async function onMessage(data) {
   node.buffer = buffer;
   node.connect(outputGain);
   node.start(t0);
-  scheduled.push({ seq, node, t0, duration });
+  scheduled.push({ seq, node, t0, duration, silent });
   if (scheduled.length > 8) scheduled.shift();
 
   const latency = ctx.outputLatency || 0;

@@ -1201,7 +1201,7 @@ def create_app(args):
         spec = {"task": None, "text": None, "request": None, "outbox": [], "committed": False}
         # Bookkeeping for "unmute" interrupts. Positions are byte offsets into the whole
         # speech stream of this session (sent or dropped), so they survive `speech` being cut.
-        stream = {"base": 0, "in_flight": False}
+        stream = {"base": 0, "in_flight": False, "idle": True}
         chunk_speech = {}      # chunk seq -> (stream position of its first speech byte, speech bytes in it)
         # pieces: spoken text + stream range; queued/synthesised/llm_done tell whether more was coming
         last_reply = {"message": None, "id": None, "pieces": [], "queued": 0, "synthesised": 0, "llm_done": False,
@@ -1271,6 +1271,12 @@ def create_app(args):
                         last_reply["pieces"].append({"text": sentence, "start": start, "end": start + len(pcm)})
                     speech.extend(pcm)
                     speech.extend(sentence_gap)
+                    if stream.get("idle") and not hold["on"]:
+                        # The avatar is resting: make the next chunk now instead of on the next beat. The beat
+                        # wait was 0.4 s of the 1.7 s from text on screen to sound (measured 2026-11-23); the
+                        # page cuts the resting chunk it is playing when this one comes (realtime_mic_client).
+                        stream["idle"] = False
+                        kick.set()
                 if request.get("reply") is last_reply["message"] and last_reply["message"] is not None:
                     last_reply["synthesised"] += 1
                 synth_state["busy"] = requests.qsize() > 0
@@ -2216,6 +2222,7 @@ def create_app(args):
                 held = hold["on"]
                 pcm = b"" if held else bytes(speech[:slice_bytes])
                 del speech[:len(pcm)]
+                stream["idle"] = not pcm and not speech   # nothing to say: the next speech may start at once
                 chunk_speech[session["seq"]] = (stream["base"], len(pcm))
                 chunk_speech.pop(session["seq"] - 200, None)
                 stream["base"] += len(pcm)
