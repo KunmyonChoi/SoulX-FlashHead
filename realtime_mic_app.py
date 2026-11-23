@@ -459,8 +459,30 @@ UNSPEAKABLE = re.compile("[*#`_~>|\\[\\]\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F
 PIECE_END = re.compile(r"[.!?。！？](?=\s)|\n")
 
 
-def take_piece(buffer, min_chars):
-    """Cut a speakable piece off the front of streamed LLM text, ending at a sentence boundary."""
+CLAUSE_END = re.compile(r"[,，](?=\s)")
+# Where a long first sentence with no comma may still be cut: after a connecting ending ("가서", "내리쬐고",
+# "대화하며", "좋은데"). Measured first sentences ran to 30-45 characters without a comma (2026-11-23).
+LINK_END = re.compile(r"(?<=[가-힣])(고|서|며|면|면서|는데|은데|인데|지만|니까|어서|아서|해서|라서|도록)(?=\s)")
+FIRST_SENTENCE_CHARS = 5     # the first piece may end at a sentence end this early ("안녕하세요!") ...
+FIRST_CLAUSE_CHARS = 10      # ... or at a comma: synthesis takes about 0.45 s + 0.02 s a character (2026-11-23)
+
+
+def take_piece(buffer, min_chars, first=False):
+    """Cut a speakable piece off the front of streamed LLM text, ending at a sentence boundary.
+
+    first: the reply's first piece, which the avatar waits for. It may be shorter, and may end at a comma: it is
+    synthesised sooner, and the rest is ready before it has been said."""
+    if first:
+        for match in PIECE_END.finditer(buffer):
+            if len(buffer[:match.end()].strip()) >= FIRST_SENTENCE_CHARS:
+                return buffer[:match.end()], buffer[match.end():]
+        for match in CLAUSE_END.finditer(buffer):
+            if len(buffer[:match.end()].strip()) >= FIRST_CLAUSE_CHARS:
+                return buffer[:match.end()], buffer[match.end():]
+        for match in LINK_END.finditer(buffer):
+            if len(buffer[:match.end()].strip()) >= FIRST_CLAUSE_CHARS:
+                return buffer[:match.end()], buffer[match.end():]
+        return None, buffer
     for match in PIECE_END.finditer(buffer):
         if len(buffer[:match.end()].strip()) >= min_chars:
             return buffer[:match.end()], buffer[match.end():]
@@ -1160,6 +1182,9 @@ def create_app(args):
         slice_bytes = engine.slice_samples * 2
         duration = engine.slice_frames / engine.fps
         sentence_gap = b"\x00" * (int(0.3 * engine.sample_rate) * 2)
+        # a piece cut inside a sentence (a first piece ending at a comma or a connecting ending) goes on almost at once
+        clause_gap = b"\x00" * (int(0.06 * engine.sample_rate) * 2)
+        comma_gap = b"\x00" * (int(0.15 * engine.sample_rate) * 2)
         speech = bytearray()   # synthesised PCM not yet sent
         marks = []             # where each request's speech starts inside `speech`
         requests = asyncio.Queue()
@@ -1270,7 +1295,8 @@ def create_app(args):
                         start = stream["base"] + len(speech)
                         last_reply["pieces"].append({"text": sentence, "start": start, "end": start + len(pcm)})
                     speech.extend(pcm)
-                    speech.extend(sentence_gap)
+                    speech.extend(sentence_gap if re.search(r"[.!?。！？…~]\s*$", sentence)
+                                  else comma_gap if re.search(r"[,，]\s*$", sentence) else clause_gap)
                     if stream.get("idle") and not hold["on"]:
                         # The avatar is resting: make the next chunk now instead of on the next beat. The beat
                         # wait was 0.4 s of the 1.7 s from text on screen to sound (measured 2026-11-23); the
@@ -1644,7 +1670,7 @@ def create_app(args):
                         buffer += value
                         await out({"type": "chat_delta", "id": request_id, "text": value})
                         # a short first piece gets the avatar talking sooner
-                        piece, buffer = take_piece(buffer, 40 if answer_queued else 15)
+                        piece, buffer = take_piece(buffer, 40, first=not answer_queued)
                         correction = objection(piece, guarded and not calls, known) if piece and live else None
                         if correction:
                             if await take_back(piece, buffer, correction):
