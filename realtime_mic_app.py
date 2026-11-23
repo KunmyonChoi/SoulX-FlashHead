@@ -85,6 +85,10 @@ GATE_FRAME = 320  # 20 ms at 16 kHz
 GUEST_MAGIC = b"FHGA"  # binary message carrying the simulated user's voice (auto source)
 # Rough delay between the server sending a chunk and the browser starting to play it.
 CLIENT_PLAYBACK_DELAY = 0.3
+# A short utterance begun while the avatar talks (a cue: "그래?", "보험료요?") closes after this much silence, not 0.7 s:
+# recognising a cue took about 1 s, and the avatar talked on for 2.2 s before answering it (2026-11-23).
+CUE_CLOSE_SILENCE = 0.35
+QUICK_CLOSE_VOICED = 1.0   # seconds of speech up to which an utterance counts as short
 WIND_DOWN_MAX = 1.5    # seconds the avatar may go on to finish its clause after a cue; further, it fades at a word gap
 WIND_DOWN_FADE = 0.25
 # A question sentence of the reply; a short yes or no begun up to this many seconds after it was heard answers it.
@@ -143,7 +147,8 @@ def listener_cue(text, said):
     # surprise words ask back even when the recogniser drops the "?" ("오 정말." for "오 정말?", 2026-11-23)
     if ASK_BACK.match(bare) and (asked or SURPRISED.match(bare)):
         return ("ask_back", None)
-    if asked:
+    # a word it just said, echoed with "요": Whisper often drops the "?" of a short "보험료요?" (2026-11-23)
+    if asked or bare.endswith("요"):
         word = re.sub(r"(이라고요|라고요|이에요|예요|이요|요)$", "", bare)
         if len(word) >= 2 and word in re.sub(r"\s+", "", said or ""):
             return ("word", word)
@@ -749,6 +754,7 @@ class Endpointer:
         self.pause_windows = int(self.PAUSE_SILENCE * sample_rate / self.WINDOW)
         self.max_windows = int(self.MAX_LENGTH * sample_rate / self.WINDOW)
         self.judge = None          # set by the session: audio -> probability that the turn is over
+        self.quick_close = None    # set by the session: seconds of silence that close a short utterance (cues)
         self.last = {"silence": self.END_SILENCE, "probability": None}  # how the latest utterance was closed
         self.reset()
 
@@ -810,6 +816,9 @@ class Endpointer:
                     except Exception as e:  # never let the judge stop the microphone
                         logger.warning(f"End-of-turn model failed: {e}")
                         self.close_windows, self.probability = self.end_windows, None
+                if self.quick_close and self.voiced * self.WINDOW / self.sample_rate <= QUICK_CLOSE_VOICED:
+                    # a short cue said over the avatar ("그래?"): answered 0.35 s after it ends instead of 0.7 s
+                    self.close_windows = min(self.close_windows, int(self.quick_close * self.sample_rate / self.WINDOW))
                 events.append(("pause", so_far))
             if self.silence >= self.close_windows or len(self.windows) >= self.max_windows:
                 if long_enough:
@@ -1850,8 +1859,12 @@ def create_app(args):
                 await out({"type": "chat_delta", "id": request.get("id"), "text": ack + " "})
             go_on = None
             if rest and cue.get("heard") is not None and not cue.get("clean"):
-                go_on = (f"말이 \"…{heard[-25:]}\"에서 끊겼습니다. 앞의 말을 되풀이하지 말고, 끊긴 곳부터 자연스럽게 이어서 남은 "
-                         f"내용을 말하세요(필요하면 끊긴 문장의 뒷부분만 매끄럽게 다시 잇습니다). 남은 부분: \"{rest[:400]}\"")
+                # faded inside a phrase: say that phrase again from its start, not the whole sentence ("네, 맞아요.
+                # 내시는 보험료를 ..." began mid-phrase, 2026-11-23)
+                bounds = [m.end() for m in re.finditer(r"[,.!?。，]\s*", heard)] + [m.end() for m in LINK_END.finditer(heard)]
+                phrase = heard[max(bounds, default=0):].strip()
+                go_on = (f"말이 구절 \"{phrase}…\" 중간에서 끊겼습니다. 그 앞의 말은 되풀이하지 말고, 이 구절을 처음부터 말해 남은 "
+                         f"내용으로 자연스럽게 이어 가세요. 이어 갈 내용: \"{(phrase + ' ' + rest)[:420]}\"")
             elif rest:
                 go_on = ((f"말이 문장 중간에서 끊겼으니 그 문장 \"{partial}…\"을 처음부터 다시 말한 뒤, " if partial else "")
                          + f"끊긴 말의 남은 부분을 자연스럽게 이어서 말하세요. 남은 부분: \"{rest[:400]}\"")
@@ -2380,6 +2393,8 @@ def create_app(args):
                         listen["in_tail"] = tail
                         listen["began_over_avatar"] = avatar_busy() and not tail
                         listen["began_at"] = loop.time()
+                        endpointer.quick_close = (CUE_CLOSE_SILENCE if listen["began_over_avatar"]
+                                                  and settings.get("cue_replies", True) else None)
                     if kind == "start" and avatar_busy():
                         if tail:
                             pass   # the avatar has said everything: this is the user's turn, likely an answer
