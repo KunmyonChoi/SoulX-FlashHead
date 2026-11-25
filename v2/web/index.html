@@ -858,6 +858,18 @@ function bubbleFor(id) {
   return chatBubbles[id];
 }
 
+// What a lookup found (its "links": news items, web pages, Wikipedia articles), under its line in the chat. The
+// assistant says "화면에 링크를 띄워 두었어요" only when the lookup sent some (2026-11-25: it said so with none shown).
+function showLinks(line, m) {
+  if (!m.ok || !Array.isArray(m.links) || !m.links.length || line.nextSibling?.classList?.contains('links')) return;
+  const items = m.links.filter(l => l && /^https?:/.test(l.url || '')).slice(0, 6).map(l => {
+    let label = (l.title || '').trim();
+    if (!label) { try { label = new URL(l.url).hostname.replace(/^www\./, ''); } catch (e) { label = l.url; } }
+    return el('a', { href: l.url, target: '_blank', rel: 'noopener noreferrer' }, label.slice(0, 80));
+  });
+  if (items.length) line.after(el('div', { class: 'msg links' }, ...items));
+}
+
 function onTool(m) {
   const key = m.id + '|' + m.name + '|' + JSON.stringify(m.arguments);
   let line = toolLines[key];
@@ -875,6 +887,7 @@ function onTool(m) {
     line.textContent = label + (m.needs_confirmation ? ' 실행 전 확인 단계' : m.ok === false ? ' 실패' + why : '') + ' · ' + sec(m.ms);
     line.title = m.result || '';
     line.classList.toggle('failed', m.ok === false && !m.needs_confirmation);
+    showLinks(line, m);
     if (Screen.cards) Screen.onTool(m);      // screen agents: the confirm card is on the screen, not in the chat
     else if (isWrite(m)) onWriteTool(m);
   }
