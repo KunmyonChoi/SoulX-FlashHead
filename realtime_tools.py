@@ -379,9 +379,10 @@ class Toolbox:
 
     # ---- news in detail ----------------------------------------------------------------------
 
-    async def get_news_detail(self, topic):
+    async def get_news_detail(self, topic, links=None):
         """Google's feed has titles only; Bing's also carries the first lines of each article.
-        Several openings of the same story add up to the who / what / when / why."""
+        Several openings of the same story add up to the who / what / when / why.
+        links: as in search_news."""
         words = [w for w in re.sub(r"[\"'‘’“”\[\]()…·,]", " ", str(topic or "")).split()
                  if w not in {"뉴스", "소식", "기사", "관련", "자세히", "내용"}]
         if not words:
@@ -411,6 +412,8 @@ class Toolbox:
                 detail = ", ".join(part for part in (source, age) if part)
                 lines.append(f"{len(lines) + 1}. {title}" + (f" ({detail})" if detail else "")
                              + f"\n   {body[:DETAIL_CHARS]}")
+                if links is not None and (item.findtext("link") or "").startswith("http"):
+                    links.append((title, item.findtext("link").strip()))
                 if len(lines) == DETAIL_ARTICLES:
                     break
             if lines:
@@ -745,7 +748,9 @@ class Toolbox:
 
     # ---- news --------------------------------------------------------------------------------
 
-    async def search_news(self, query):
+    async def search_news(self, query, links=None):
+        """links: a list that gets (title, address) of each item listed, for a screen that shows them.
+        The addresses are not in the text: the model has no use for them and would read them out."""
         # the model tends to pass "반도체 뉴스" or "오늘의 주요 뉴스"; the feed wants the bare topic
         # (whole words only: "택시기사" and "뉴스타파" are topics)
         generic = {"오늘", "오늘의", "최신", "최근", "요즘", "주요", "관련", "뉴스", "소식", "기사", "헤드라인", "속보"}
@@ -787,6 +792,8 @@ class Toolbox:
                 pass
             detail = ", ".join(part for part in (source, age) if part)
             lines.append(f"{len(lines) + 1}. {title}" + (f" ({detail})" if detail else ""))
+            if links is not None and (item.findtext("link") or "").startswith("http"):
+                links.append((title, item.findtext("link").strip()))
             if len(lines) == NEWS_ITEMS:
                 break
         if not lines:

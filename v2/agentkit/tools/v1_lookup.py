@@ -74,28 +74,55 @@ async def get_weather(arguments, ctx):
     return await _run("get_weather", arguments.get("location"), arguments.get("day_offset"))
 
 
+URL = re.compile(r"https?://[^\s)\]>'\"]+")
+LINKS_SHOWN = 6
+
+
+def _with_links(text, links=()):
+    """{"ok", "text", "data": {"links": [{title, url}]}}: the addresses go to the screen (the "tool" event), and the
+    model is told how many are shown, so it says "화면에 링크를 띄워 두었어요" only when there are some (it said so
+    after a news lookup that had none, 2026-11-25)."""
+    found, seen = [], set()
+    for title, url in list(links) + [("", m.group(0).rstrip(".,")) for m in URL.finditer(text or "")]:
+        if url not in seen:
+            seen.add(url)
+            found.append({"title": str(title or "").strip(), "url": url})
+    found = found[:LINKS_SHOWN]
+    if found:
+        text = f"{text}\n[화면에 링크 {len(found)}개를 띄웠습니다. 주소는 읽지 않습니다.]"
+    return {"ok": True, "text": text, "data": {"links": found} if found else None}
+
+
 async def search_news(arguments, ctx):
-    return await _run("search_news", arguments.get("query"))
+    links = []
+    return _with_links(await _run("search_news", arguments.get("query"), links), links)
 
 
 async def get_news_detail(arguments, ctx):
-    return await _run("get_news_detail", arguments.get("topic"))
+    links = []
+    return _with_links(await _run("get_news_detail", arguments.get("topic"), links), links)
 
 
 async def search_geeknews(arguments, ctx):
-    return await _run("search_geeknews", arguments.get("query"))
+    return _with_links(await _run("search_geeknews", arguments.get("query")))
 
 
 async def read_geeknews(arguments, ctx):
-    return await _run("read_geeknews", arguments.get("title"))
+    return _with_links(await _run("read_geeknews", arguments.get("title")))
 
 
 async def search_wikipedia(arguments, ctx):
-    return await _run("search_wikipedia", arguments.get("query"), getattr(ctx, "language", "ko") or "ko")
+    language = getattr(ctx, "language", "ko") or "ko"
+    text = await _run("search_wikipedia", arguments.get("query"), language)
+    # the result names its articles ("1. 훈민정음: ..." or "훈민정음: ..."); their pages are the links
+    titles = re.findall(r"^(?:\d+\.\s*)?([^:\n]{1,60}):\s", text or "", re.M)
+    site = "en" if language == "en" else "ko"
+    return _with_links(text, [(t.strip(), f"https://{site}.wikipedia.org/wiki/" + t.strip().replace(" ", "_"))
+                              for t in titles[:4] if "위키백과" not in t and "Wikipedia" not in t][:3])
 
 
 async def web_search(arguments, ctx):
-    return await _run("web_search", arguments.get("query"))
+    return _with_links(await _run("web_search", arguments.get("query")))
 
 
 # ---- knowledge base listing (WeKnora) ---------------------------------------------------------

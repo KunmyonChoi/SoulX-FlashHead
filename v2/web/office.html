@@ -539,6 +539,15 @@ const LINK_TOOLS = { search_news: '뉴스 링크', get_news_detail: '기사 링�
   read_geeknews: '긱뉴스 링크', search_wikipedia: '위키백과', web_search: '검색 결과' };
 function showLinks(m) {
   const seen = new Set(), links = [];
+  if (Array.isArray(m.links) && m.links.length) {     // the lookup's own list (news items carry no address in the text)
+    const shown = m.links.filter(l => l && /^https?:/.test(l.url || '')).slice(0, 6).map(l => {
+      let label = (l.title || '').trim();
+      if (!label) { try { label = new URL(l.url).hostname.replace(/^www\./, ''); } catch (e) { label = l.url; } }
+      return { url: l.url, label: label.slice(0, 70) };
+    });
+    if (shown.length) addTurn('links', LINK_TOOLS[m.name], { links: shown });
+    return;
+  }
   for (const line of String(m.result || '').split('\n')) {
     for (const match of line.matchAll(/https?:\/\/[^\s)\]>'"]+/g)) {
       const url = match[0].replace(/[.,]+$/, '');

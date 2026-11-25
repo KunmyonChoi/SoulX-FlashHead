@@ -253,7 +253,10 @@ class Engine:
             "effect": effect, "executed": result.executed,
             "needs_confirmation": result.needs_confirmation,
             "confirmation_text": result.confirmation_text, "error_type": result.error_type,
-            "call_id": result.call_id})
+            "call_id": result.call_id,
+            # addresses a lookup found (v1_lookup), for the page to show under the turn
+            **({"links": result.data["links"]} if isinstance(result.data, dict)
+               and isinstance(result.data.get("links"), list) else {})})
 
     def _tool_contracts(self):
         """{name: contract} of the tools this agent may call: listed in the definition and known to the gateway."""

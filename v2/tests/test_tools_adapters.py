@@ -372,13 +372,15 @@ async def test_v1_tools_wrap_the_toolbox_and_classify_its_failures(monkeypatch):
                 raise realtime_tools.ToolError("'아틀란티스' 지역을 찾지 못했습니다.")
             return "서울 오늘: 맑음, 최저 영상 3도, 최고 영상 11도."
 
-        async def search_news(self, query):
+        async def search_news(self, query, links=None):
             calls.append(("search_news", query))
+            if links is not None:
+                links.append(("첫 기사", "https://news.example/1"))
             if len([c for c in calls if c[0] == "search_news"]) == 1:
                 raise httpx.ConnectError("refused")
             return "1. 첫 기사\n2. 둘째 기사"
 
-        async def get_news_detail(self, topic):
+        async def get_news_detail(self, topic, links=None):
             raise ET.ParseError("bad feed")
 
         async def search_geeknews(self, query):
@@ -400,6 +402,9 @@ async def test_v1_tools_wrap_the_toolbox_and_classify_its_failures(monkeypatch):
     assert (await gateway.call(make_ctx(), "get_weather", {"location": "서울"})).error_type == "invalid_input"
     news = await gateway.call(make_ctx(), "search_news", {"query": "반도체"})          # ConnectError, then the retry
     assert news.ok and news.items == 2
+    # the addresses go to the screen, not into the text; the model is told that they are shown
+    assert news.data == {"links": [{"title": "첫 기사", "url": "https://news.example/1"}]}
+    assert "https://" not in news.text.split("[화면에")[0] and "[화면에 링크 1개를 띄웠습니다" in news.text
     assert (await gateway.call(make_ctx(), "get_news_detail", {"topic": "x"})).error_type == "system_error"
     assert (await gateway.call(make_ctx(), "search_geeknews", {"query": ""})).error_type == "system_error"
     assert (await gateway.call(make_ctx(), "read_geeknews", {"title": "Rust"})).text == "글 요약 Rust"

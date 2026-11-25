@@ -1,0 +1,17 @@
+{
+  "agent_id": "office-assistant",
+  "version": 13,
+  "state": "pending_approval",
+  "created_at": 1795589654.9994957,
+  "created_by": "claude",
+  "based_on": 12,
+  "note": "링크는 실제로 띄웠을 때만 말한다; '링크 보여 줘'는 다시 조회해 띄운다",
+  "safety_change": false,
+  "changed_fields": [
+    "flow",
+    "tests.personas"
+  ],
+  "test_run_id": "office-assistant.v13.20261125-155646-6c3d",
+  "approved_by": null,
+  "approved_at": null
+}
