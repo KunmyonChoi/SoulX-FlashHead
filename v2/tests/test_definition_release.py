@@ -119,7 +119,7 @@ def test_screen_parts_are_ordinary_changes_and_show_in_the_diff(store):
     assert store.load(SHOP, n) == d
     diff = store.diff(SHOP, 1, n)
     assert set(diff) == {"opening", "screen", "actions"}
-    assert diff["opening"]["before"] == {"say": "", "tools": []}
+    assert diff["opening"]["before"] == {"say": "", "tools": [], "brief": ""}
     assert diff["opening"]["after"]["tools"] == [{"name": "get_order", "arguments": {}}]
     assert diff["actions"]["before"] == [] and diff["actions"]["after"][0]["tool"] == "handoff_to_human"
     # an action on a tool the agent does not have is refused and nothing is written

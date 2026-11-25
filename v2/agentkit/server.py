@@ -431,6 +431,9 @@ async def serve_text(ws, engine, notices=None):
         # The agent speaks first. Not a task: the opening calls are short lookups, and a message that
         # arrives meanwhile must not cancel them (the menu on screen comes from them).
         await answer(OPENING_ID, engine.open())
+        if getattr(getattr(engine.definition, "opening", None), "brief", "") and hasattr(engine, "brief"):
+            # the briefing (weather, schedule, mail, news) as a task: a message that arrives meanwhile cancels it
+            task = asyncio.create_task(answer("brief", engine.brief()))
 
     try:
         while True:

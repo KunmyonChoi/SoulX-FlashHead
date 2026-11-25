@@ -26,7 +26,14 @@ class TextConversation:
     async def opening(self):
         """Runs the agent's opening once: its words and the screens it put up. An agent without an
         opening (or a second call) gives an empty turn."""
-        return await self._turn(self.engine.open())
+        turn = await self._turn(self.engine.open())
+        if getattr(getattr(self.engine.definition, "opening", None), "brief", "") and hasattr(self.engine, "brief"):
+            # the briefing belongs to the agent's first words
+            brief = await self._turn(self.engine.brief())
+            turn = AgentTurn(text=" ".join(t for t in (turn.text, brief.text) if t), displays=turn.displays + brief.displays,
+                             tool_calls=turn.tool_calls + brief.tool_calls, handoff=turn.handoff or brief.handoff,
+                             ms=turn.ms + brief.ms)
+        return turn
 
     async def act(self, name, arguments=None):
         """A touch on the screen (definition.actions). A refused touch gives an empty turn; the reason

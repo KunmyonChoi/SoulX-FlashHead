@@ -40,8 +40,9 @@ async def test_agent_without_opening_screen_or_actions_is_unchanged():
 async def test_opening_calls_tools_shows_screens_and_says_the_words():
     engine, llm, gateway, recorder = cafe([[text("네, 아메리카노는 4500원입니다.")]])
     events = await gather(engine.open())
-    assert types(events) == ["tool", "tool", "display", "tool", "tool", "display", "piece", "done"]
-    assert [e.data["state"] for e in events if e.type == "tool"] == ["start", "done", "start", "done"]
+    # the opening calls start together; their results come in order
+    assert types(events) == ["tool", "tool", "tool", "display", "tool", "display", "piece", "done"]
+    assert [e.data["state"] for e in events if e.type == "tool"] == ["start", "start", "done", "done"]
     displays = [e.data for e in events if e.type == "display"]
     assert [(d["kind"], d["source"]) for d in displays] == [("menu", "get_menu"), ("cart", "get_cart")]
     assert displays[0]["data"]["categories"][0]["items"][0]["id"] == "americano"
@@ -315,3 +316,47 @@ def test_fill_and_collect():
     _collect({"listing": {"spoken": "읽지 않은 메일이 3통 있어요.", "rows": []}, "count": 3}, found)
     assert _fill("{spoken} 무엇을 도와드릴까요?", found) == "읽지 않은 메일이 3통 있어요. 무엇을 도와드릴까요?"
     assert _fill("{spoken} {shown} 무엇을 도와드릴까요?", dict(found, shown="")) == "읽지 않은 메일이 3통 있어요. 무엇을 도와드릴까요?"
+
+
+async def test_opening_calls_run_at_the_same_time():
+    """A briefing opening (weather, schedule, mail, news) waited for the sum of its lookups."""
+    import asyncio
+    import time
+    engine, llm, gateway, recorder = cafe([[text("네.")]])
+    real = engine._call_tool
+
+    async def slow(state, call, language):
+        await asyncio.sleep(0.3)
+        return await real(state, call, language)
+    engine._call_tool = slow
+    started = time.perf_counter()
+    events = await gather(engine.open())
+    assert time.perf_counter() - started < 0.55          # two calls of 0.3 s each, not 0.6 s
+    assert [e.data["name"] for e in events if e.type == "tool" and e.data["state"] == "done"] == ["get_menu", "get_cart"]
+
+
+async def test_brief_is_said_after_the_opening_as_a_notice():
+    engine, llm, gateway, recorder = cafe([[text("오늘은 맑고, 메뉴는 화면에 있어요.")]])
+    engine.definition.opening.brief = "메뉴와 장바구니를 한 문장으로 알려 주세요."
+    assert types(await gather(engine.brief())) == ["done"]        # nothing before the opening
+    await gather(engine.open())
+    events = await gather(engine.brief())
+    assert events[-1].type == "done" and "맑고" in events[-1].text
+    assert any("시스템 알림" in m.get("content", "") and "메뉴와 장바구니" in m.get("content", "")
+               for m in engine.history if m.get("role") == "user")
+    assert types(await gather(engine.brief())) == ["done"]        # once: the conversation has begun
+
+
+async def test_no_brief_without_one():
+    engine, llm, gateway, recorder = cafe([[text("네.")]])
+    await gather(engine.open())
+    assert types(await gather(engine.brief())) == ["done"]
+
+
+async def test_plain_opening_words_come_before_the_calls():
+    engine, llm, gateway, recorder = cafe([[text("네.")]])
+    engine.definition.opening.say = "안녕하세요. 오늘 브리핑 해 드릴게요."
+    events = await gather(engine.open())
+    assert types(events)[0] == "piece" and types(events)[-1] == "done"
+    assert [m["content"] for m in engine.history if m.get("role") == "assistant" and m.get("content")] == [
+        "안녕하세요. 오늘 브리핑 해 드릴게요."]

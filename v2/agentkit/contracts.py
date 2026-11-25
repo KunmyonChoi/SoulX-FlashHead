@@ -154,9 +154,15 @@ class Opening(BaseModel):
 
     `say` is spoken or shown as the agent's first words. `tools` are called first, in order; what
     they return goes on the screen (their contract's `display`) and into the conversation history,
-    so the model knows, for example, the menu it is about to take orders from."""
+    so the model knows, for example, the menu it is about to take orders from.
+
+    `brief`: an instruction for a briefing the model gives right after `say`, from what the opening
+    tools returned (the office assistant's weather, schedule, mail and news). It runs as a notice
+    (ReplyEngine.brief): not the customer's turn, so no consent is read from it, and it can be
+    talked over like any reply."""
     say: str = ""
     tools: list[OpeningCall] = Field(default_factory=list)
+    brief: str = ""
 
 
 class ScreenSettings(BaseModel):

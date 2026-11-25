@@ -1019,17 +1019,35 @@ class Engine:
         self.history.insert(0, note)
         unseen = False
         found = {}          # values the opening tools returned, by key: fill the opening words' {placeholders}
+        # words that need nothing from the tools ("안녕하세요. 오늘 브리핑 해 드릴게요.") are said before the calls,
+        # so the avatar greets at once while the lookups run
+        early = bool(say) and "{" not in say and not re.search(r"화면|screen", say, re.I)
         try:
+            if early:
+                state.t_first = time.time()
+                yield ReplyEvent(type="piece", text=say)
             calls = [{"name": call.name, "arguments": dict(call.arguments)} for call in opening.tools]
             if calls:
                 exchange = [{"role": "assistant", "content": "",
                              "tool_calls": [{"function": dict(call)} for call in calls]}]
+                # all at once (weather, schedule, mail and news for a briefing took their sum, about 3 s);
+                # their results are taken in order
+                effects, jobs = [], []
                 for call in calls:
                     contract = self._tool_contracts().get(call["name"])
                     effect = getattr(contract, "effect", "read") or "read"
+                    effects.append(effect)
                     yield ReplyEvent(type="tool", data={"state": "start", "name": call["name"],
                                                         "arguments": call["arguments"], "effect": effect})
-                    result, text = await self._call_tool(state, call, language)
+                    jobs.append(asyncio.ensure_future(self._call_tool(state, call, language)))
+                try:
+                    for job in jobs:
+                        await asyncio.wait({job})
+                finally:
+                    for job in jobs:
+                        job.cancel()
+                for call, effect, job in zip(calls, effects, jobs):
+                    result, text = job.result()
                     if self._unseen(result):
                         text = (text + "\n" if text else "") + line("screen_unseen", language)
                         unseen = True
@@ -1052,8 +1070,9 @@ class Engine:
                 position = self._pinned()
                 self.history.insert(position, state.reply)
                 entries.append(state.reply)
-                state.t_first = time.time()
-                yield ReplyEvent(type="piece", text=say)
+                if not early:
+                    state.t_first = time.time()
+                    yield ReplyEvent(type="piece", text=say)
             state.finished = True
             state.t_end = time.time()
             self._record(state)
@@ -1065,6 +1084,21 @@ class Engine:
                 state.t_end = time.time()
                 state.interrupted = True
                 self._record(state)
+
+    async def brief(self):
+        """The briefing after the opening words (definition.opening.brief): the model tells the customer
+        what the opening tools found, as a notice (see notify). Only "done" when there is none, or when
+        the opening has not run or the conversation has already begun."""
+        text = str(getattr(self.definition.opening, "brief", "") or "").strip()
+        if not text or not self._opened or self.turn > 0:
+            yield ReplyEvent(type="done", text="", data={"turn": self.turn, "notice": False})
+            return
+        events = self.notify(text)
+        try:
+            async for event in events:
+                yield event
+        finally:
+            await events.aclose()
 
     async def act(self, name, arguments):
         """A touch on the screen (definition.actions): the mapped tool is called through the gateway,

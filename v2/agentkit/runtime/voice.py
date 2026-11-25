@@ -402,6 +402,8 @@ class VoiceSession:
                 events = self.engine.open()          # the agent speaks first (turn 0)
             elif request.get("notice"):
                 events = self.engine.notify(request["text"])   # the agent speaks up about a finished task
+            elif request.get("brief"):
+                events = self.engine.brief()                   # the briefing after the opening words
             elif request.get("action") is not None:
                 events = self.engine.act(request["action"]["name"], request["action"]["arguments"])
             else:
@@ -484,8 +486,23 @@ class VoiceSession:
         after "ready". Returns the task, or None when the agent has no opening."""
         if not client_features(self.engine.definition)["opening"] or not hasattr(self.engine, "open"):
             return None
-        return self._start_reply({"id": OPENING_ID, "opening": True, "text": "", "t_user_end": time.time(),
+        task = self._start_reply({"id": OPENING_ID, "opening": True, "text": "", "t_user_end": time.time(),
                                   "utterance_end": None})
+        opening = getattr(self.engine.definition, "opening", None)
+        if getattr(opening, "brief", "") and hasattr(self.engine, "brief"):
+            generation = self.generation
+
+            async def then_brief():
+                # right after the opening words are queued (not after they are heard), so the briefing is
+                # written while the greeting plays; skipped when the customer has already spoken
+                await asyncio.wait({task})
+                if self.closed or generation != self.generation or self.chat_task is not task:
+                    return
+                self.listen["turn"] += 1
+                self._start_reply({"id": f"brief-{self.listen['turn']}", "brief": True, "text": "",
+                                   "t_user_end": time.time(), "utterance_end": None})
+            self._brief_job = asyncio.create_task(then_brief())   # kept: a task nobody holds may be collected
+        return task
 
     # ---- interruptions --------------------------------------------------------------------------
 

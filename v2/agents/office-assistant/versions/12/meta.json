@@ -1,0 +1,17 @@
+{
+  "agent_id": "office-assistant",
+  "version": 12,
+  "state": "pending_approval",
+  "created_at": 1795587621.2946916,
+  "created_by": "claude",
+  "based_on": 11,
+  "note": "시작 브리핑: 오늘·내일 날씨, 오늘 일정, 새 메일, 주요 뉴스",
+  "safety_change": false,
+  "changed_fields": [
+    "tests.personas",
+    "opening"
+  ],
+  "test_run_id": "office-assistant.v12.20261125-153044-aa5f",
+  "approved_by": null,
+  "approved_at": null
+}

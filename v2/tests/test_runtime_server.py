@@ -299,9 +299,9 @@ def test_text_channel_opening_display_and_action():
             # the opening comes by itself, under the id "opening"
             messages = until(ws, "chat_done")
             assert all(m["id"] == "opening" for m in messages)
-            assert [m["type"] for m in messages] == ["tool", "tool", "display", "tool", "tool", "display",
+            assert [m["type"] for m in messages] == ["tool", "tool", "tool", "display", "tool", "display",
                                                      "chat_delta", "chat_done"]
-            menu = messages[2]
+            menu = messages[3]
             assert set(menu) == {"type", "id", "kind", "data", "source"}
             assert menu["kind"] == "menu" and menu["source"] == "get_menu" and menu["data"]["categories"]
             assert messages[5]["kind"] == "cart" and messages[5]["data"]["lines"] == []
