@@ -208,6 +208,9 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--focus); }
 .busy { font-size: 12.5px; color: var(--muted); }
 .turn.filler { background: transparent; color: var(--muted); font-size: 13px; padding: 2px 4px; }
 .turn.error { background: var(--rust-soft); color: var(--rust); }
+.turn.links { align-self: flex-start; display: flex; flex-direction: column; gap: 3px; padding: 6px 12px; border: 1px solid var(--line, rgba(127,127,127,.25)); background: transparent; font-size: 13.5px; }
+.turn.links .links-title { font-size: 12px; color: var(--muted); }
+.turn.links a { color: var(--focus-ink); text-underline-offset: 2px; overflow-wrap: anywhere; }
 .video { margin: 0 16px 10px; border-radius: 14px; overflow: hidden; background: var(--sunk); aspect-ratio: 1; max-height: 38vh; align-self: center; width: calc(100% - 32px); max-width: 38vh; }
 .video canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
 </style>
@@ -309,7 +312,10 @@ function busy(text) { $('busy').textContent = text || ''; }
 // ---- conversation rail -----------------------------------------------------------------------
 function addTurn(role, text, extra = {}) { const t = { role, text, ...extra }; S.log.push(t); if (extra.id) S.turns[extra.id] = t; renderLog(); return t; }
 function renderLog() {
-  $('log').replaceChildren(...S.log.map(t => h('div', { class: 'turn ' + t.role + (t.unsure ? ' unsure' : '') }, t.text,
+  $('log').replaceChildren(...S.log.map(t => t.links
+    ? h('div', { class: 'turn links' }, h('span', { class: 'links-title' }, t.text),
+        ...t.links.map(l => h('a', { href: l.url, target: '_blank', rel: 'noopener noreferrer' }, l.label)))
+    : h('div', { class: 'turn ' + t.role + (t.unsure ? ' unsure' : '') }, t.text,
     t.heard ? h('span', { class: 'heard' }, '이렇게 들었어요. ', h('button', { class: 'fix', onclick: () => fixTurn(t) }, '고치기')) : null)));
   $('log').scrollTop = $('log').scrollHeight;
 }
@@ -515,6 +521,7 @@ function onMessage(raw) {
   else if (m.type === 'transcript') { const t = addTurn('user', m.text, { heard: true }); busy('비서가 생각하는 중…'); if (!m.speculative) $('choices').replaceChildren(); }
   else if (m.type === 'display') onDisplay(m);
   else if (m.type === 'tool' && m.state === 'start') busy(TOOL_WORDS[m.name] || '확인하는 중…');
+  else if (m.type === 'tool' && m.state === 'done' && m.ok && LINK_TOOLS[m.name]) showLinks(m);
   else if (m.type === 'filler') caption(m.text);
   else if (m.type === 'notice') toast(m.message || m.text || '');
   else if (m.type === 'error') { addTurn('error', m.message || '오류'); busy(''); }
@@ -523,7 +530,27 @@ function onMessage(raw) {
 }
 const TOOL_WORDS = { list_mail: '메일함을 여는 중…', read_mail: '메일을 여는 중…', search_mail: '메일을 찾는 중…', cleanup_mail: '정리하는 중…',
   undo_cleanup: '되돌리는 중…', send_mail: '보낼 메일을 정리하는 중…', cancel_send: '보내기를 멈추는 중…', list_events: '일정을 보는 중…',
-  find_free_time: '빈 시간을 찾는 중…', create_event: '일정을 확인하는 중…', create_draft: '초안을 저장하는 중…' };
+  find_free_time: '빈 시간을 찾는 중…', create_event: '일정을 확인하는 중…', create_draft: '초안을 저장하는 중…',
+  get_weather: '날씨를 보는 중…', search_news: '뉴스를 찾는 중…', get_news_detail: '기사를 읽는 중…',
+  search_geeknews: '긱뉴스를 찾는 중…', read_geeknews: '긱뉴스 글을 읽는 중…', search_wikipedia: '위키백과를 찾는 중…',
+  web_search: '인터넷에서 찾는 중…' };
+// lookups whose results carry addresses: shown as links under the turn (the assistant does not read them out)
+const LINK_TOOLS = { search_news: '뉴스 링크', get_news_detail: '기사 링크', search_geeknews: '긱뉴스 링크',
+  read_geeknews: '긱뉴스 링크', search_wikipedia: '위키백과', web_search: '검색 결과' };
+function showLinks(m) {
+  const seen = new Set(), links = [];
+  for (const line of String(m.result || '').split('\n')) {
+    for (const match of line.matchAll(/https?:\/\/[^\s)\]>'"]+/g)) {
+      const url = match[0].replace(/[.,]+$/, '');
+      if (seen.has(url)) continue;
+      seen.add(url);
+      let label = line.slice(0, match.index).replace(/^\s*\d+\.\s*/, '').replace(/[\s:(\-–—|·]+$/, '').trim();
+      if (!label) { try { label = new URL(url).hostname.replace(/^www\./, ''); } catch (e) { label = url; } }
+      links.push({ url, label: label.slice(0, 70) });
+    }
+  }
+  if (links.length) addTurn('links', LINK_TOOLS[m.name], { links: links.slice(0, 6) });
+}
 function setListen(state) {
   const pill = $('listen'), text = { listening: '듣는 중', hearing: '듣는 중', speaking: '말하는 중', transcribing: '알아듣는 중', ready: '대화 중', off: '대화 전' }[state] || '대화 중';
   pill.className = 'pill ' + (state === 'speaking' ? 'speaking' : state === 'off' ? 'off' : 'listening'); $('listen-text').textContent = text;

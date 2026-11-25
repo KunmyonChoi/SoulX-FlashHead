@@ -1,0 +1,23 @@
+{
+  "agent_id": "office-assistant",
+  "version": 11,
+  "state": "pending_approval",
+  "created_at": 1795587118.9938781,
+  "created_by": "claude",
+  "based_on": 10,
+  "note": "날씨, 뉴스, 긱뉴스, 위키백과, 인터넷 검색 (v1 조회 도구)",
+  "safety_change": true,
+  "changed_fields": [
+    "description",
+    "persona",
+    "tools",
+    "tool_packs",
+    "flow",
+    "prohibitions",
+    "evaluation.success",
+    "tests.personas"
+  ],
+  "test_run_id": "office-assistant.v11.20261125-151303-3751",
+  "approved_by": null,
+  "approved_at": null
+}
