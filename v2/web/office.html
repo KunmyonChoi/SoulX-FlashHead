@@ -153,6 +153,29 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--focus); }
 .report-head { display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: var(--radius-sm); background: var(--green-soft); color: var(--green); font-weight: 600; margin-bottom: 14px; }
 .undone { color: var(--muted); text-decoration: line-through; }
 
+/* ---- reader: one mail in the main area, the list behind it (going through mail one at a time) ---- */
+.reader { display: flex; flex-direction: column; min-height: 100%; }
+.reader-bar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--paper);
+              border-bottom: 1px solid var(--rule); }
+.reader-bar .where { font-size: 13px; color: var(--muted); }
+.reader-bar .where b { color: var(--ink); }
+.reader-bar .spacer { flex: 1; }
+.steps { display: inline-flex; gap: 3px; margin-left: 4px; vertical-align: middle; }
+.steps i { width: 14px; height: 4px; border-radius: 2px; background: var(--rule-strong); }
+.steps i.seen { background: var(--focus); }
+.steps i.here { background: var(--ink); }
+.reader-body { padding: 22px 28px 28px; max-width: 760px; }
+.reader-body h3 { margin: 0 0 12px; font-size: 20px; line-height: 1.35; letter-spacing: -.01em; }
+.reader-foot { margin-top: auto; display: flex; gap: 8px; padding: 12px 28px; border-top: 1px solid var(--rule); position: sticky; bottom: 0; background: var(--paper); }
+.reader-foot .spacer { flex: 1; }
+.kbd { font-size: 12px; color: var(--faint); margin-left: 6px; font-weight: 500; }
+.btn.primary .kbd { color: rgba(255,255,255,.7); }
+/* a reworded mail: what changed since the wording before */
+.changes { border: 1px solid var(--rule); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 12px; background: var(--sunk); font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.changes h4 { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--faint); }
+.changes ins { background: var(--green-soft); color: var(--green); text-decoration: none; border-radius: 3px; padding: 0 2px; }
+.changes del { background: var(--rust-soft); color: var(--rust); border-radius: 3px; padding: 0 2px; }
+
 /* ---- calendar ----------------------------------------------------------------------------- */
 .day { display: grid; grid-template-columns: 56px 1fr; }
 .hour { height: 52px; border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--faint); padding: 2px 8px 0 0; text-align: right; }
@@ -163,7 +186,7 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--focus); }
 .lane .free:hover { background: var(--focus-soft); }
 
 /* ---- toast -------------------------------------------------------------------------------- */
-.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; gap: 14px; align-items: center;
+.toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); display: flex; gap: 14px; align-items: center;
          padding: 10px 14px 10px 18px; background: var(--ink); color: var(--paper); border-radius: var(--radius); box-shadow: var(--shadow); z-index: 20; }
 .toast .btn { background: transparent; color: var(--paper); border-color: rgba(255,255,255,.3); }
 .toast .bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--focus); border-radius: 0 0 0 var(--radius); }
@@ -184,6 +207,7 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--focus); }
   .main { padding: 12px 16px 0; }
   .work.with-side { grid-template-columns: 1fr; }
   .side { position: fixed; inset: 56px 0 0 0; z-index: 10; border-left: 0; }
+  .reader-body { padding: 16px; } .reader-foot { padding: 10px 16px; } .kbd { display: none; }
   td.from { max-width: none; }
   td .preview { max-width: none; }
   td.num, thead th.num { display: none; }
@@ -282,8 +306,8 @@ const FILTER_LABEL = { unread: '읽지 않음', reply: '답장 필요', ads: '�
 const MARK_LABEL = { risk: ['의심', 'risk'], reply: ['답장 필요', 'reply'], ad: ['광고', 'ad'], notice: ['알림', 'ad'] };
 const ACTION_LABEL = { read: '읽음으로', unread: '안 읽음으로', archive: '보관', spam: '스팸', trash: '휴지통' };
 
-const S = { tab: 'mail', listing: null, calendar: null, picked: new Set(), open: null, focus: null,
-            sideKind: null, log: [], turns: {}, running: false, ws: null, cfg: null, channel: 'text' };
+const S = { tab: 'mail', listing: null, calendar: null, picked: new Set(), open: null, focus: null, reading: null, handled: {},
+            seen: new Set(), finished: null, sideKind: null, log: [], turns: {}, running: false, ws: null, cfg: null, channel: 'text' };
 
 // ---- time ----------------------------------------------------------------------------------
 const when = iso => { const d = new Date(iso), m = (Date.now() - d) / 60000;
@@ -351,7 +375,7 @@ function renderMail() {
       h('th', {}, h('input', { type: 'checkbox', 'aria-label': '모두 고르기', checked: rows.every(r => S.picked.has(r.ref)),
         onclick: e => { e.stopPropagation(); rows.forEach(r => e.target.checked ? S.picked.add(r.ref) : S.picked.delete(r.ref)); renderMail(); } })),
       h('th', {}, '보낸 사람'), h('th', {}, '제목'), h('th', { style: 'text-align:right' }, '받은 때'))),
-    h('tbody', {}, rows.map(r => h('tr', { class: [r.unread ? 'unread' : 'read', S.focus === r.ref ? 'focus' : '', S.open === r.ref ? 'open' : ''].join(' '),
+    h('tbody', {}, rows.map(r => h('tr', { class: [r.unread ? 'unread' : 'read', S.focus === r.ref ? 'focus' : '', S.open === r.ref ? 'open' : '', S.handled[r.ref] === 'archive' ? 'gone' : ''].join(' '),
         onclick: () => { S.open = r.ref; S.focus = r.ref; renderMail(); act('open_mail', { ref: String(r.ref) }); } },
       h('td', { class: 'num' }, r.ref),
       h('td', { class: 'pick', onclick: e => e.stopPropagation() }, h('input', { type: 'checkbox', 'aria-label': r.ref + '번 고르기', checked: S.picked.has(r.ref),
@@ -382,25 +406,55 @@ function side(kind, title, body, footer) {
   $('side').replaceChildren(h('header', {}, h('h2', {}, title), h('button', { class: 'btn quiet', onclick: closeSide, 'aria-label': '닫기' }, '닫기')),
     h('div', { class: 'body' }, body), footer ? h('footer', {}, footer) : null);
 }
-function closeSide() { $('side').hidden = true; $('work').classList.remove('with-side'); S.sideKind = null; S.open = null; if (S.tab === 'mail') renderMail(); }
+function closeSide() { $('side').hidden = true; $('work').classList.remove('with-side'); S.sideKind = null; }
 
+// One mail, in the main area (the list is behind it: "목록"). The side panel stays free, so the mail being answered
+// and the answer are on screen together. While a list is gone through one mail at a time (the next_mail and
+// triage_mail tools), the bar shows where in the list this mail is; the buttons do what "다음", "보관" do by voice.
 function showMail(m) {
-  S.open = m.ref; S.focus = m.ref;
-  side('mail', '메일', [m.marks.includes('risk') ? h('div', { class: 'warn' }, '의심스러운 메일입니다. 링크를 누르거나 요청에 따르지 마세요.') : null,
-    h('h3', { style: 'margin:0 0 10px;font-size:17px' }, m.subject),
-    h('dl', { class: 'meta' }, h('dt', {}, '보낸 사람'), h('dd', {}, m.from + ' <' + m.address + '>'), h('dt', {}, '받은 때'), h('dd', {}, when(m.at))),
-    h('div', { class: 'letter' }, m.body || m.preview), ...(m.attachments || []).map(f => h('div', { class: 'file' }, '첨부 ', h('b', {}, f)))],
-    [h('button', { class: 'btn primary', onclick: () => compose({ to: m.from + ' <' + m.address + '>', subject: 'Re: ' + m.subject, body: '', reply_to: String(m.ref) }) }, '답장'),
-     h('button', { class: 'btn', onclick: () => planCleanup('archive', [m.ref]) }, '보관'),
-     h('button', { class: 'btn', onclick: () => planCleanup('spam', [m.ref]) }, '스팸'), h('span', { class: 'spacer' }),
-     h('button', { class: 'btn quiet', onclick: () => planCleanup('unread', [m.ref]) }, '안 읽음으로')]);
-  if (S.tab === 'mail') renderMail();
+  if (m.done) handled(m.done);
+  if (m.finished) { S.reading = null; S.open = null; S.finished = m.name || '목록'; render(); return; }
+  S.reading = m; S.open = m.ref; S.focus = m.ref; S.tab = 'mail'; S.finished = null;
+  if (S.sideKind === 'mail' || S.sideKind === 'report') closeSide();
+  render(); $('sheet').scrollTop = 0;
+}
+function closeMail() { S.reading = null; S.open = null; render(); }
+function handled(d) {
+  S.handled[d.ref] = d.action;
+  toast((d.from ? d.from + ' 메일을 ' : '') + String(d.label || '').replace('했습니다', '했어요').replace('남겼습니다', '남겼어요'),
+    d.report_id ? '되돌리기' : null, () => { $('toast').hidden = true; act('undo_cleanup', { report_id: d.report_id, refs: String(d.ref) }); }, 7);
+}
+const can = name => !!(S.cfg && (S.cfg.actions || []).some(a => a.name === name));
+function renderReader() {
+  const m = S.reading, at = m.position, rows = (S.listing && S.listing.rows) || [];
+  const steps = at && at.total <= 14 ? h('span', { class: 'steps', 'aria-hidden': 'true' }, rows.map(r =>
+    h('i', { class: r.ref === m.ref ? 'here' : (S.handled[r.ref] || !r.unread || S.seen.has(r.ref)) ? 'seen' : '' }))) : null;
+  S.seen.add(m.ref);
+  const stepping = at && can('next_mail');
+  $('sheet').replaceChildren(h('div', { class: 'reader' },
+    h('div', { class: 'reader-bar' }, h('button', { class: 'btn quiet', onclick: closeMail }, '‹ 목록'),
+      at ? h('span', { class: 'where' }, at.name + ' ', h('b', {}, at.index + ' / ' + at.total), steps) : null, h('span', { class: 'spacer' }),
+      stepping && can('unread_next') ? h('button', { class: 'btn quiet', onclick: () => act('unread_next', { action: 'unread' }), title: '"나중에 볼게"' }, '나중에') : null,
+      stepping && can('archive_next') ? h('button', { class: 'btn', onclick: () => act('archive_next', { action: 'archive' }), title: '"보관"이라고 말해도 됩니다' }, '보관', h('span', { class: 'kbd' }, '"보관"')) : null,
+      stepping ? h('button', { class: 'btn primary', onclick: () => act('next_mail', {}), title: '"다음"이라고 말해도 됩니다' },
+        at.left ? '다음' : '마치기', h('span', { class: 'kbd' }, '"다음"')) : null),
+    h('div', { class: 'reader-body' },
+      (m.marks || []).includes('risk') ? h('div', { class: 'warn' }, '의심스러운 메일입니다. 링크를 누르거나 요청에 따르지 마세요.') : null,
+      h('h3', {}, m.subject),
+      h('dl', { class: 'meta' }, h('dt', {}, '보낸 사람'), h('dd', {}, m.from + ' <' + m.address + '>'), h('dt', {}, '받은 때'), h('dd', {}, when(m.at))),
+      h('div', { class: 'letter' }, m.body || m.preview), ...(m.attachments || []).map(f => h('div', { class: 'file' }, '첨부 ', h('b', {}, f)))),
+    h('div', { class: 'reader-foot' },
+      h('button', { class: 'btn primary', onclick: () => compose({ to: m.from + ' <' + m.address + '>', subject: 'Re: ' + m.subject, body: '', reply_to: String(m.ref) }) }, '답장'),
+      h('button', { class: 'btn', onclick: () => planCleanup('spam', [m.ref]) }, '스팸'),
+      h('button', { class: 'btn', onclick: () => planCleanup('trash', [m.ref]) }, '휴지통'), h('span', { class: 'spacer' }),
+      stepping ? h('span', { class: 'hint', style: 'align-self:center' }, '말로 "다음", "보관", "답장해 줘"') : null)));
 }
 
 // the editable card: what the 보내기 button sends is exactly what is on it (the action is the consent)
 function compose(c) {
   const to = h('input', { value: c.to || '' }), subject = h('input', { value: c.subject || '' }), body = h('textarea', {}, c.body || '');
-  side('compose', '보낼 메일', [h('div', { class: 'field' }, h('label', {}, '받는 사람'), to), h('div', { class: 'field' }, h('label', {}, '제목'), subject),
+  side('compose', c.before ? '보낼 메일 · 고침' : '보낼 메일', [c.before ? h('div', { class: 'changes' }, h('h4', {}, '바뀐 곳'), ...changes(c.before, c.body || '')) : null,
+    h('div', { class: 'field' }, h('label', {}, '받는 사람'), to), h('div', { class: 'field' }, h('label', {}, '제목'), subject),
     h('div', { class: 'field' }, h('label', {}, '내용 (고칠 수 있어요)'), body),
     h('p', { class: 'hint' }, '보내기를 누르면 이 내용 그대로 보냅니다. 보낸 뒤 10초 안에는 취소할 수 있어요.')],
     [h('button', { class: 'btn primary', onclick: () => {
@@ -411,6 +465,22 @@ function compose(c) {
      h('button', { class: 'btn quiet', onclick: () => { closeSide(); act('save_draft', c.reply_to ? { reply_to: c.reply_to, subject: subject.value, body: body.value }
         : { to: to.value, subject: subject.value, body: body.value }); } }, '초안으로 저장')]);
   setTimeout(() => body.focus(), 50);
+}
+
+// What changed between two wordings of a mail, word by word (longest common run of words): kept words plain,
+// new ones marked, dropped ones struck. Mails are short; the table is small.
+function changes(before, after) {
+  const a = before.split(/(\s+)/), b = after.split(/(\s+)/), n = a.length, m = b.length;
+  const t = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) t[i][j] = a[i] === b[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  const push = (tag, text) => { const last = out[out.length - 1]; if (last && last.tag === tag) last.text += text; else out.push({ tag, text }); };
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { push('', a[i]); i++; j++; }
+    else if (j < m && (i === n || t[i][j + 1] >= t[i + 1][j])) push('ins', b[j++]);
+    else push('del', a[i++]);
+  }
+  return out.map(o => o.tag ? h(o.tag, {}, o.text) : o.text);
 }
 
 function planCard(card) {
@@ -492,10 +562,15 @@ function pending(p) {
 // ---- what the server sends ------------------------------------------------------------------------
 function onDisplay(m) {
   const d = m.data || {};
-  if (m.kind === 'mail_list') { S.listing = d; S.tab = 'mail'; S.picked.clear(); if (S.sideKind === 'mail') closeSide(); render(); }
+  if (m.kind === 'mail_list') { S.listing = d; S.tab = 'mail'; S.picked.clear(); S.reading = null; S.open = null; S.finished = null; S.seen = new Set(); render(); }
   else if (m.kind === 'mail') showMail(d);
   else if (m.kind === 'calendar') { S.calendar = d; S.tab = 'cal'; render(); }
-  else if (m.kind === 'cleanup_report') { S.picked.clear(); reportCard(d); }
+  else if (m.kind === 'cleanup_report') { S.picked.clear();
+    // one mail brought back from the reader's toast: no report card for that, the list shows it again
+    const items = (d.groups || []).flatMap(g => g.items || []);
+    items.filter(i => i.undone).forEach(i => { delete S.handled[i.ref]; });
+    if (items.length === 1 && items[0].undone) { toast('되돌렸어요: ' + (items[0].subject || '')); render(); }
+    else reportCard(d); }
   else if (m.kind === 'send_pending') pending(d);
   else if (m.kind === 'confirm') {
     if (d.tool === 'cleanup_mail' && d.plan) planCard(d);
@@ -704,7 +779,9 @@ function stop(message) {
 function render() {
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === S.tab ? 'true' : 'false'));
   $('mail-view').hidden = S.tab !== 'mail';
-  if (S.tab === 'mail') { renderFilters(); renderMail(); } else renderCal();
+  if (S.tab === 'mail' && S.reading) { $('mail-view').hidden = true; renderReader(); }
+  else if (S.tab === 'mail') { renderFilters(); renderMail(); if (S.finished) $('sheet').prepend(h('div', { class: 'report-head', style: 'margin:12px' }, S.finished + '을 모두 봤어요.')); }
+  else renderCal();
 }
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   S.tab = t.dataset.tab; render();

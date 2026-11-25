@@ -430,6 +430,13 @@ class Gateway:
             info["reproposed"] = "arguments_changed"
         if proposal is not None and ctx.turn <= proposal.turn:
             info["phase"] = "same_turn_refused"
+            if contract.revisable:
+                # the model was told it may call again with changed arguments, and called with the same ones
+                return _fail("not_confirmed",
+                             f"인자가 기다리고 있는 요청과 똑같아서 아무것도 바뀌지 않았습니다. 고객이 내용을 고쳐 달라고 했다면 "
+                             f"그 부분을 실제로 고친 인자로 {contract.name} 도구를 다시 호출하세요. 고칠 것이 없거나 고쳐 달라는 "
+                             f"말이 아니었다면 호출하지 말고, 고객의 말에 답한 뒤 \"{proposal.confirmation_text}\"라고 물으세요.",
+                             confirmation_text=proposal.confirmation_text)
             return _fail("not_confirmed",
                          f"아직 고객의 답을 듣지 않아 실행하지 않았습니다. 지금은 고객에게 \"{proposal.confirmation_text}\"라고 "
                          f"묻기만 하고, 고객이 동의하면 다음 턴에 같은 인자로 {contract.name} 도구를 다시 호출하세요.",
@@ -446,6 +453,13 @@ class Gateway:
         if verdict == "no":
             del state.proposals[key]
             info["phase"] = "declined"
+            if contract.revisable:
+                # "금요일 말고 목요일로" declines this wording and asks for another in one breath
+                return _fail("not_confirmed",
+                             f"고객이 이 내용 그대로는 동의하지 않아 실행하지 않았습니다. 아무것도 바뀌지 않았습니다. 고객이 내용을 "
+                             f"바꿔 달라고 한 것이면(예: '금요일 말고 목요일로') 그 부분을 고친 인자로 {contract.name} 도구를 지금 "
+                             f"다시 호출하고, 돌아온 확인 문장을 그대로 읽으세요. 고친 내용을 도구 없이 말로만 읽어 주면 안 됩니다. "
+                             f"그만두라는 뜻이면 실행하지 않았다고 말하고 원하는 것을 물어보세요.")
             return _fail("not_confirmed",
                          "고객이 동의하지 않아 실행하지 않았습니다. 아무것도 바뀌지 않았습니다. "
                          "고객이 원하는 것을 다시 물어보세요.")
@@ -470,6 +484,14 @@ class Gateway:
     async def _propose(self, ctx, contract, adapter, arguments, state, key, info):
         info["phase"] = "proposed"
         state.proposals.pop(key, None)
+        if contract.revisable:
+            # a reworded request takes the place of the one that was waiting: with both open, a later "응" could
+            # send the wording the customer had asked to change
+            replaced = [k for k in state.proposals if k[0] == contract.id]
+            for old in replaced:
+                state.proposals.pop(old, None)
+            if replaced:
+                info["revised"] = len(replaced)
         preview = await self._guarded(contract, lambda: self._attempts(
             adapter.preview, arguments, ctx, contract, contract.retries, info), info)
         if isinstance(preview, ToolResult):         # the preview could not be made

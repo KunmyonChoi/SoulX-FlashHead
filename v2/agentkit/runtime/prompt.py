@@ -298,6 +298,10 @@ LINES = {
         "question": "질문: ",
         "opening": "(대화가 시작되었습니다. 고객이 방금 도착했습니다.)",
         "touch": "화면에서 {name} 동작을 했습니다",
+        "said_done": "(시스템 안내: 고객의 말대로 방금 처리했습니다. 같은 도구를 다시 호출하지 말고, 위 결과를 그 안의 "
+                     "'말하는 법'에 따라 짧게 말하세요.)",
+        "said_failed": "(시스템 안내: 고객의 말대로 하려 했지만 처리되지 않았습니다. 다시 호출하지 말고, 위 안내를 고객에게 "
+                       "한두 문장으로 전하세요.)",
         "touch_done": "(시스템 안내: 고객이 화면을 눌러 직접 한 동작이며 이미 처리되었습니다. 같은 도구를 다시 호출하지 "
                       "마세요. 바뀐 것만 한 문장으로 짧게 확인하세요.)",
         "loop_cut": "제가 말이 꼬였어요. 다시 물어봐 주시면 정확히 답할게요.",
@@ -308,6 +312,11 @@ LINES = {
                           "말하세요.)",
         "touch_failed": "(시스템 안내: 고객이 화면을 눌렀지만 처리되지 않았습니다. 다시 호출하지 말고, 위 안내를 "
                         "고객에게 한두 문장으로 전하세요.)",
+        "confirm_revise": "(시스템 안내: 고객의 답이 동의도 거절도 아니어서 아직 실행하지 않았습니다. 요청은 취소되지 않고 그대로 "
+                          "기다리고 있습니다. 고객이 내용을 고쳐 달라고 한 것이면, 고친 인자로 {name} 도구를 지금 다시 호출하고 "
+                          "돌아온 확인 문장을 그대로 읽으세요. 고친 내용을 도구 없이 말로만 읽어 주면 안 됩니다: 그 내용은 실행되지 "
+                          "않고, 고치기 전 내용이 그대로 기다립니다. 고쳐 달라는 말이 아니면 고객의 말에 한 문장으로 답한 뒤 이 "
+                          "확인 문장을 그대로 다시 물으세요: \"{text}\")",
         "confirm_open": "(시스템 안내: 고객의 답이 동의인지 거절인지 분명하지 않습니다. 요청은 취소되지 않고 그대로 "
                         "기다리고 있습니다. \"접수하지 않았다\"거나 \"취소했다\"고 말하지 마세요. 고객의 말에 한 문장으로 "
                         "답한 뒤, 이 확인 문장을 그대로 다시 물으세요: \"{text}\" 도구는 다시 호출하지 마세요.)",
@@ -329,6 +338,10 @@ LINES = {
         "question": "Question: ",
         "opening": "(The conversation has started. The customer has just arrived.)",
         "touch": "did {name} on the screen",
+        "said_done": "(System note: this was just carried out as the customer said. Do not call the same tool again; "
+                     "tell the result above briefly, as it says how.)",
+        "said_failed": "(System note: this was tried as the customer said but was not carried out. Do not call the tool "
+                       "again; tell the customer what the note above says in a sentence or two.)",
         "touch_done": "(System note: the customer did this by touching the screen and it has already been carried "
                       "out. Do not call the tool again. Acknowledge what changed in one short sentence.)",
         "loop_cut": "I got tangled up there. Ask me again and I'll answer properly.",
@@ -340,6 +353,12 @@ LINES = {
                           "press the button or say yes.)",
         "touch_failed": "(System note: the customer touched the screen but it was not carried out. Do not call the "
                         "tool again; pass on the guidance above in a sentence or two.)",
+        "confirm_revise": "(System note: the customer neither agreed nor declined, so nothing was executed. The request "
+                          "is not cancelled; it is still waiting. If the customer asked for a change, call {name} again now "
+                          "with the changed arguments and read the confirmation sentence that comes back as it is. Do not "
+                          "read a changed version aloud without the tool: that version is not carried out, and the "
+                          "unchanged one keeps waiting. If it was not a request for a change, answer what the customer said "
+                          "in one sentence, then ask this confirmation sentence again as it is: \"{text}\")",
         "confirm_open": "(System note: it is not clear whether the customer agreed or declined. The request is not "
                         "cancelled; it is still waiting. Do not say it was not done or was cancelled. Answer what the "
                         "customer said in one sentence, then ask this confirmation sentence again as it is: \"{text}\" "

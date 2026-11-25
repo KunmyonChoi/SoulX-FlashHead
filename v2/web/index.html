@@ -488,6 +488,8 @@ const Office = {
           .map(k => el('span', { class: 'tag ' + k }, k === 'risk' ? '의심' : '답장')), r.subject || '(제목 없음)'),
         el('td', { class: 'at' }, r.at ? this.when(r.at) : ''))))));
     } else if (kind === 'mail') {
+      // going through a list one mail at a time (next_mail, triage_mail): the list is done
+      if (d.finished) { this.card(kind, (d.name || '메일') + ' · 모두 봤습니다'); return; }
       this.card(kind, (d.from || '') + ' · ' + (d.at ? this.when(d.at) : ''), el('div', { style: 'font-weight:600' }, d.subject || '(제목 없음)'),
         el('div', { class: 'body' }, String(d.body || '').slice(0, 3000)),
         (d.attachments || []).length ? el('div', { class: 'muted' }, '첨부: ' + d.attachments.join(', ')) : null);

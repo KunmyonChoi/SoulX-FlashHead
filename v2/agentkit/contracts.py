@@ -185,6 +185,13 @@ class ClientAction(BaseModel):
     # propose: the touch makes the proposal (a plan, a mail to look at); it still runs only after consent.
     # consent: the touch IS the consent (a "보내기" button under the whole mail on screen): it runs at once.
     propose: bool = False
+    # Said instead of touched: when the customer's whole utterance is one of `phrases` ("다음", "보관") while the
+    # screen `while_showing` (a display kind, e.g. "mail") is the one in front of them, the engine carries the
+    # action out with `arguments` before the model speaks, exactly as for a touch. A step word then never depends
+    # on the model choosing the tool, and costs one model pass instead of two. Not while a confirmation waits.
+    phrases: list[str] = Field(default_factory=list)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    while_showing: str = ""
     consent: bool = False
 
 
@@ -301,6 +308,10 @@ class ToolContract(BaseModel):
     pii_output: list[str] = Field(default_factory=list)   # dotted paths in `data` holding personal data
     filler: Optional[str] = None              # said at once while the call runs ("주문을 확인해 볼게요.")
     display: Optional[DisplaySpec] = None     # what the customer sees when the call succeeds
+    # write tools with a confirm_template: the customer may answer the confirmation by asking for a change
+    # ("더 정중하게", "금요일을 목요일로") instead of yes or no. The engine then lets the model call the tool again
+    # with changed arguments, and the new proposal replaces the one that was waiting (ToolGateway).
+    revisable: bool = False
     reply: Optional[ToolReply] = None         # spoken at once on success, skipping the model's second pass
     adapter: AdapterSpec
 

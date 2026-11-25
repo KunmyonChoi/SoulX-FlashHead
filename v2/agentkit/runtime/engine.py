@@ -30,6 +30,8 @@ MAX_TOOL_ROUNDS = 3        # times one reply may go back to the LLM with tool re
 HISTORY_MESSAGES = 40      # about this many messages are kept, never starting mid-exchange
 FIRST_PIECE_CHARS = 15     # a short first piece gets the voice talking sooner
 PIECE_CHARS = 40
+# screens drawn over the main one (a card, a toast): they do not change what the customer is looking at
+CARD_KINDS = {"confirm", "notice", "send_pending", "cleanup_report"}
 RESULT_CHARS = 1200        # of a tool result shown in the "tool" event
 
 
@@ -150,6 +152,7 @@ class Engine:
         self._opening_entries = []              # the opening's messages: head of the history, never trimmed
         self._carry = None         # (words, time): a customer turn cut off before any of its answer was heard
         self._opened = False
+        self._showing = None       # the display kind in front of the customer (cards over it do not count)
         settings = dict(settings or {})
         # which screens the customer's page can draw ("mail_list,mail,..."); None: not said, every screen counts as
         # seen. The conversation page with the avatar draws no mail table, and the assistant kept saying "화면에
@@ -239,6 +242,8 @@ class Engine:
             if not isinstance(entry, dict) or not entry.get("kind"):
                 continue
             kind, source = str(entry["kind"]), str(entry.get("source") or "")
+            if kind not in CARD_KINDS and not state.speculative:
+                self._showing = kind
             self._span(state, "display", time.time(), name=kind, output={"data": entry.get("data")},
                        attrs={"source": source})
             events.append(ReplyEvent(type="display", data={"kind": kind, "data": entry.get("data"), "source": source}))
@@ -466,6 +471,13 @@ class Engine:
         state = _Turn(self.turn, user_text, bool(speculative), t_user_end or time.time(), self._last)
         state.carried = carried
         state.touch = _touch is not None
+        said = None
+        if _touch is None and not _notice and not speculative and not carried:
+            said = self._said_action(user_text)
+            if said is not None and self._pending_answer(state) is None:
+                _touch = (said, dict(said.arguments))     # carried out like a touch; the words stay the customer's
+            else:
+                said = None
         state.notice = bool(_notice)
         self._last = state
         reply = state.reply
@@ -693,6 +705,8 @@ class Engine:
                            attrs={"tool": action.tool})
 
                 def touch_note(result):
+                    if said is not None:
+                        return line("said_done" if result.ok else "said_failed", turn_language)
                     # the sentence may name things only the result knows ("{name}")
                     state.user_message["content"] = touch_sentence(action, arguments, turn_language, result.data)
                     if result.needs_confirmation:
@@ -719,6 +733,10 @@ class Engine:
                     nonlocal still_open
                     if not result.ok and result.error_type == "not_confirmed" and result.confirmation_text:
                         still_open = result.confirmation_text
+                        # a request whose wording the customer may change (contract.revisable): the model may call
+                        # it again with new arguments; a new proposal then becomes the open one (tool_round)
+                        if getattr(self._tool_contracts().get(answer["name"]), "revisable", False):
+                            return line("confirm_revise", turn_language, text=result.confirmation_text, name=answer["name"])
                         return line("confirm_open", turn_language, text=result.confirmation_text)
                     return ""
 
@@ -963,7 +981,10 @@ class Engine:
             spoken = speakable(buffer)
             if spoken:
                 yield ReplyEvent(type="piece", text=spoken)
-            if still_open and still_open not in reply["content"] and not self.handed_off:
+            # (compared by letters and digits only: the model writes "..." for "…" or adds a space, and the same
+            # sentence was then said twice; a changed name or number still counts as not asked)
+            bare = lambda text: re.sub(r"[\W_]+", "", text)
+            if still_open and bare(still_open) not in bare(reply["content"]) and not self.handed_off:
                 # the model answered but did not ask again: without the question the customer would not know
                 # that the request is still waiting for them
                 ask = speakable(still_open)
@@ -1192,6 +1213,24 @@ class Engine:
             matches = list(re.finditer(found.pattern, sentence))
             question = bool(matches) and all(re.match(r"\s*[?？]", sentence[m.end():m.end() + 3]) for m in matches)
         return self.guards.check(sentence, done | asked) if question else found
+
+    def _said_action(self, text):
+        """The action the customer's whole utterance stands for (ClientAction.phrases), if its screen is showing."""
+        bare = lambda words: re.sub(r"[\W_]+", "", str(words or "")).lower()
+        words = bare(text)
+        if not words:
+            return None
+        contracts = self._tool_contracts()
+        for action in getattr(self.definition, "actions", None) or []:
+            phrases = getattr(action, "phrases", None) or []
+            if not phrases or action.tool not in contracts or getattr(contracts[action.tool], "confirm_template", None):
+                continue
+            showing = getattr(action, "while_showing", "") or ""
+            if showing and showing != self._showing:
+                continue
+            if words in {bare(p) for p in phrases}:
+                return action
+        return None
 
     def _pending_answer(self, state):
         """The customer's answer to a confirmation question: the call that asked it, to be made again now.

@@ -1,0 +1,23 @@
+# 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
+# 메일을 한 통씩 넘겨 보기: 화면 목록의 순서대로, 아직 열지 않은 다음 메일을 연다.
+name: next_mail
+description: 화면 목록에서 아직 열어 보지 않은 다음 메일을 화면에 열고 본문을 읽는다. 메일을 한 통씩 보는 중에 사용자가 '다음', '넘겨', '다음 메일'이라고 하거나, '하나씩 보자',
+  '하나씩 처리하자', '첫 메일부터 보자'라고 시작할 때 쓴다. 번호를 몰라도 된다. 메일을 연 뒤에 사용자가 '다음'이라고만 말하면 언제나 이 도구를 부른다(방금 답장을 보냈거나 보관한 뒤에도 마찬가지다). 지금 연 메일은 그대로 둔다(읽음 상태). 그 목록이 이미 화면에 있으면(대화를 시작할 때 읽지 않은 메일 목록이 떠 있다) list_mail을 다시 부르지 않고 곧바로 이것을 부른다.
+effect: read
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: string
+  description: 모델에 전할 글
+timeout_s: 10.0
+retries: 1
+pii_input: []
+pii_output: []
+filler: 다음 메일 열어 볼게요.
+display:
+  kind: mail
+  path: mail
+adapter:
+  kind: python
+  target: agentkit.tools.google:next_mail
