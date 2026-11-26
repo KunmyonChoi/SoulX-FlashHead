@@ -50,8 +50,8 @@ def test_main_agents_are_deployed(store, agent):
 @pytest.mark.parametrize("agent", [KIOSK, *SKELETONS])
 def test_undeployed_agents_have_no_stable_version(store, agent):
     # complete, and possibly tested, but a person has not approved and deployed them
-    (info,) = store.list_versions(agent)
-    assert info.state in ("draft", "tested", "pending_approval", "approved")
+    versions = store.list_versions(agent)
+    assert versions and all(info.state in ("draft", "tested", "pending_approval", "approved") for info in versions)
     assert not (V2 / "agents" / agent / "deployment.json").exists()
     assert store.deployment(agent).stable is None
     d = store.load(agent, 1)
@@ -281,3 +281,23 @@ def test_every_agent_names_its_tool_packs(store):
         assert name in kiosk.tools and name in drive.tools
         assert resolve(contracts, name, kiosk.tool_packs) == "cafe." + name
         assert resolve(contracts, name, drive.tool_packs) == "burger." + name
+
+
+def test_drafts_read_back_what_was_heard(store):
+    """Version 2 of the clinic and the airline agent (found on the voice channel, 2026-11-18): a
+    misheard birth date or booking reference must come back to the caller, who can then correct it."""
+    clinic, flight = store.load("clinic-intake", 2), store.load("flight-rebooking", 2)
+    rule = {r.id: r.rule for r in clinic.flow}["read_back_identity"]
+    assert "곧바로 find_patient를 호출" in rule and "되읽는다" in rule and "처음 오시는 게 맞는지" in rule
+    guards = {g.id: g for g in clinic.guards}
+    lookup = re.compile(guards["no_fake_patient_lookup"].pattern)
+    assert guards["no_fake_patient_lookup"].unless_tools == ["find_patient"]
+    assert lookup.search("김하늘 님, 1991년 6월 21일생으로 확인했습니다.") and lookup.search("6월 20일생으로 다시 조회하겠습니다")
+    assert not lookup.search("성함과 생년월일을 말씀해 주시겠어요?")
+    confirm = re.compile(guards["confirm_through_tool"].pattern)
+    assert confirm.search("오전 9시에 내과 진료 예약하는 것이 맞으실까요?") and confirm.search("예약할까요?")
+    assert not confirm.search("어느 시간이 좋으실까요?")
+    rule = {r.id: r.rule for r in flight.flow}["read_back_on_failure"]
+    assert "한 글자씩" in rule and "예약에 적힌 값은 말하지 않는다" in rule
+    assert [r.id for r in flight.flow][:2] == ["verify_first", "read_back_on_failure"]
+    assert store.version_info("clinic-intake", 2).based_on == 1 and store.version_info("flight-rebooking", 2).based_on == 1

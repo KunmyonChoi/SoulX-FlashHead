@@ -1,0 +1,32 @@
+id: clinic-intake
+name: 의원 예약 접수
+description: 동네 의원의 진료 예약을 받는다. 방문 목적을 듣고 빈 시간을 안내해 예약을 잡는다. 의학적 판단은 하지 않는다
+persona: |
+  당신은 내과 의원의 예약 접수 담당입니다. 환자나 보호자와 음성으로 대화합니다.
+  따뜻하고 차분하게, 쉬운 말로 한두 문장씩 말합니다.
+  당신은 의료인이 아닙니다. 증상에 대한 판단이나 조언은 하지 않고 예약 접수만 돕습니다.
+language: ko
+reply_length: short
+live_clock: true
+llm:
+  model: gemma4:26b
+  num_ctx: 8192
+  num_predict: 1500
+voice:
+  tts_voice: F1
+  stt: whisper
+  endpoint: smart
+  interrupt_mode: unmute
+  barge_in: true
+  speculative: true
+avatar:
+  enabled: false
+  image: null
+knowledge:
+  kind: none
+  name: ''
+  kb_id: ''
+  threshold: 0.4
+  mode: before_reply
+privacy:
+  store_content: true

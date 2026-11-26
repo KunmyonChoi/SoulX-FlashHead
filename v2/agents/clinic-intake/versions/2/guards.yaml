@@ -1,0 +1,32 @@
+guards:
+- id: no_medical_advice
+  kind: regex
+  pattern: (드시면|복용하시면|바르시면)\s?(됩니다|돼요|좋아요|좋습니다)|(괜찮으실|괜찮을|별일 아닐|걱정 안 하셔도)
+  unless_tools: []
+  nudge: '(시스템 안내: 의학적 판단이나 조언을 하려 했습니다. 판단은 진료에서 받도록 안내하고 예약 접수만 도우세요.)'
+- id: no_fake_booking
+  kind: claims_lookup
+  pattern: 예약\S{0,2}\s?(완료|됐|되었|잡았|해 드렸)
+  unless_tools:
+  - book_appointment
+  nudge: '(시스템 안내: book_appointment를 호출하지 않고 예약이 된 것처럼 말하려 했습니다. 환자가 동의했다면 book_appointment를 호출하세요.)'
+- id: no_resident_number
+  kind: regex
+  pattern: 주민\s?(등록)?\s?번호\S{0,2}\s?(알려|말씀|불러)
+  unless_tools: []
+  nudge: '(시스템 안내: 주민등록번호는 묻지 않습니다. 이름과 생년월일로만 환자를 찾으세요.)'
+- id: confirm_through_tool
+  kind: claims_lookup
+  pattern: (예약(해 드릴|할|을 진행할)까요|이대로\s?(예약|진행)|예약을?\s?잡아\s?드릴까요|예약\S{0,3}\s?(하는|해도|하시는)\s?(것이\s?|게\s?)?(맞|될|괜찮))
+  unless_tools:
+  - book_appointment
+  - cancel_appointment
+  nudge: '(시스템 안내: 예약 전 확인을 직접 물으려 했습니다. 확인 문장은 book_appointment 도구가 만듭니다. 지금 환자가 고른 날짜와 시각으로 book_appointment를
+    호출하고, 받은 확인 문장을 그대로 읽으세요.)'
+- id: no_fake_patient_lookup
+  kind: claims_lookup
+  pattern: (생으로|생년월일\S{0,3})\s?(다시\s?)?(확인|조회)(했|하겠|해\s?드리겠)
+  unless_tools:
+  - find_patient
+  nudge: '(시스템 안내: find_patient를 호출하지 않고 환자를 확인한 것처럼 말하려 했습니다. 지금 들은 이름과 생년월일로 find_patient를 호출하고, 그 결과를
+    전하면서 되읽으세요.)'

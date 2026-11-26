@@ -1,0 +1,16 @@
+{
+  "agent_id": "flight-rebooking",
+  "version": 2,
+  "state": "tested",
+  "created_at": 1795708012.503085,
+  "created_by": "claude",
+  "based_on": 1,
+  "note": "음성에서 잘못 들은 예약번호·생년월일을 고객이 알아챌 수 있게 되읽는다 (2026-11-18 음성 확인에서 발견)",
+  "safety_change": false,
+  "changed_fields": [
+    "flow"
+  ],
+  "test_run_id": "flight-rebooking.v2.20261127-005114-2202",
+  "approved_by": null,
+  "approved_at": null
+}

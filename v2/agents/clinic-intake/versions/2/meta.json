@@ -1,0 +1,17 @@
+{
+  "agent_id": "clinic-intake",
+  "version": 2,
+  "state": "tested",
+  "created_at": 1795708012.4546278,
+  "created_by": "claude",
+  "based_on": 1,
+  "note": "되읽기 규칙을 도구 호출 뒤로 옮기고 가드 추가",
+  "safety_change": true,
+  "changed_fields": [
+    "flow",
+    "guards"
+  ],
+  "test_run_id": "clinic-intake.v2.20261127-005008-b1e6",
+  "approved_by": null,
+  "approved_at": null
+}
