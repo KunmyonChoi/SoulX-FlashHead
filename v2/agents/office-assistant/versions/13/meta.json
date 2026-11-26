@@ -1,7 +1,7 @@
 {
   "agent_id": "office-assistant",
   "version": 13,
-  "state": "deployed",
+  "state": "retired",
   "created_at": 1795589654.9994957,
   "created_by": "claude",
   "based_on": 12,

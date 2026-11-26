@@ -1,7 +1,7 @@
 {
   "agent_id": "office-assistant",
   "version": 16,
-  "state": "tested",
+  "state": "deployed",
   "created_at": 1795705868.1260724,
   "created_by": "claude",
   "based_on": 14,
@@ -11,6 +11,6 @@
     "flow"
   ],
   "test_run_id": "office-assistant.v16.20261127-002232-9fdf",
-  "approved_by": null,
-  "approved_at": null
+  "approved_by": "kunmyon (Claude가 사용자 지시로 처리: v16 승인)",
+  "approved_at": 1795707885.7837975
 }
