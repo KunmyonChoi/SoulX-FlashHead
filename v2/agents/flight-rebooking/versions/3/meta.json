@@ -1,0 +1,17 @@
+{
+  "agent_id": "flight-rebooking",
+  "version": 3,
+  "state": "tested",
+  "created_at": 1795708954.3128421,
+  "created_by": "claude",
+  "based_on": 2,
+  "note": "편을 고르면 바로 change_flight (확인 문장에 금액 포함)",
+  "safety_change": true,
+  "changed_fields": [
+    "flow",
+    "guards"
+  ],
+  "test_run_id": "flight-rebooking.v3.20261127-012926-7d14",
+  "approved_by": null,
+  "approved_at": null
+}

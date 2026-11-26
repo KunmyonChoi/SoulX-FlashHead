@@ -301,3 +301,24 @@ def test_drafts_read_back_what_was_heard(store):
     assert "한 글자씩" in rule and "예약에 적힌 값은 말하지 않는다" in rule
     assert [r.id for r in flight.flow][:2] == ["verify_first", "read_back_on_failure"]
     assert store.version_info("clinic-intake", 2).based_on == 1 and store.version_info("flight-rebooking", 2).based_on == 1
+
+
+def test_flight_v3_spells_only_the_reference_and_confirms_through_the_tool(store):
+    """v2 on the voice channel spelled birth dates, flight numbers and dates too, and asked "shall I
+    change it?" itself in a turn of its own. v3: the spelling is for the failed reference only, the
+    three values go to verify_booking at once, and a chosen flight goes straight to change_flight."""
+    d = store.load("flight-rebooking", 3)
+    rules = {r.id: r.rule for r in d.flow}
+    assert "이때의 예약번호 하나뿐" in rules["read_back_on_failure"] and "숫자로 적는다" in rules["read_back_on_failure"]
+    assert "되묻지 말고 들은 그대로" in rules["verify_first"]
+    assert "바로 change_flight를 호출" in rules["quote_before_change"]
+    guards = {g.id: g for g in d.guards}
+    confirm = re.compile(guards["confirm_through_tool"].pattern)
+    for said in ("이렇게 변경을 진행해 드릴까요?", "KE 1205편으로 변경하시겠습니까?", "비용을 바로 확인해 드릴까요?", "변경할까요?"):
+        assert confirm.search(said), said
+    assert not confirm.search("원하시는 날짜와 시간대를 말씀해 주시겠어요?")
+    early = re.compile(guards["verify_before_read_back"].pattern)
+    assert guards["verify_before_read_back"].unless_tools == ["verify_booking"]
+    assert early.search("예약번호가 비, 칠, 케이, 알, 이, 큐, 이, 에프라고 말씀하신 건가요?")
+    assert not early.search("예약번호와 성, 생년월일을 말씀해 주시겠어요?")
+    assert store.version_info("flight-rebooking", 3).based_on == 2

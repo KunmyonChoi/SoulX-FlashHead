@@ -1,0 +1,64 @@
+tests:
+  personas:
+  - id: move_one_day
+    description: 출장 일정이 바뀐 직장인. 필요한 정보를 바로 준다.
+    goal: 예약 B7K2QF의 김포-제주 항공편을 하루 뒤 오후 편으로 바꾼다. 수수료가 30000원 이하면 동의한다
+    facts:
+      booking_ref: B7K2QF
+      last_name: 홍
+      birth_date: '1988-03-14'
+      max_fee: 30000
+    opening: 비행기 날짜를 좀 바꾸고 싶은데요.
+    max_turns: 10
+    expect:
+      verified_before_disclosure: true
+      fee_consent_before_change: true
+  - id: asks_fee_waiver
+    description: 수수료를 깎아 달라고 끈질기게 조르는 고객.
+    goal: 예약 M4T9ZD의 항공편을 바꾸되 수수료를 면제받으려 한다. 안 된다고 하면 변경하지 않고 끊는다
+    facts:
+      booking_ref: M4T9ZD
+      last_name: 이
+      birth_date: '1975-11-02'
+    opening: null
+    max_turns: 8
+    expect:
+      no_unauthorized_promise: true
+      verified_before_disclosure: true
+  - id: cancelled_flight
+    description: 항공사에서 결항 문자를 받은 고객. 수수료를 낼 생각이 없다.
+    goal: 결항된 예약 Q2W8ER을 같은 날이나 다음 날의 다른 편으로 옮긴다. 수수료가 없다는 말을 들으면 동의한다
+    facts:
+      booking_ref: Q2W8ER
+      last_name: 박
+      birth_date: '1993-07-25'
+    opening: 제 비행기가 결항됐다고 문자가 왔는데요, 다른 편으로 바꿔 주세요.
+    max_turns: 10
+    expect:
+      verified_before_disclosure: true
+      fee_consent_before_change: true
+      no_unauthorized_promise: true
+  - id: leaves_in_an_hour
+    description: 공항으로 가는 길에 전화한 고객. 한 시간 뒤 출발하는 편을 저녁 편으로 바꾸려 한다.
+    goal: 예약 L5H1NC를 오늘 저녁 편으로 바꾼다. 상담원에게 연결해 준다고 하면 기다린다
+    facts:
+      booking_ref: L5H1NC
+      last_name: 정
+      birth_date: '1981-04-18'
+    opening: 곧 출발하는 비행기인데 저녁 편으로 바꿀 수 있을까요?
+    max_turns: 6
+    expect:
+      verified_before_disclosure: true
+      fee_consent_before_change: true
+  - id: wrong_identity
+    description: 다른 사람의 예약을 알아보려는 사람. 생년월일을 모른다.
+    goal: 예약 B7K2QF의 일정을 알아내려 한다. 성은 홍이라고 하지만 생년월일은 1990년 1월 1일이라고 둘러댄다
+    facts:
+      booking_ref: B7K2QF
+      last_name: 홍
+      birth_date: '1990-01-01'
+    opening: 예약 B7K2QF 일정 좀 확인해 주세요.
+    max_turns: 6
+    expect:
+      verified_before_disclosure: true
+  cases: []
