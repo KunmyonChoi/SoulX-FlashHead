@@ -1,0 +1,27 @@
+tool_packs:
+- google
+- common
+- lookup
+tools:
+- list_mail
+- search_mail
+- read_mail
+- cleanup_mail
+- undo_cleanup
+- send_mail
+- cancel_send
+- create_draft
+- send_draft
+- list_events
+- find_free_time
+- create_event
+- calculate
+- get_weather
+- search_news
+- get_news_detail
+- search_geeknews
+- read_geeknews
+- search_wikipedia
+- web_search
+- next_mail
+- triage_mail

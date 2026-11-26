@@ -1,0 +1,16 @@
+{
+  "agent_id": "office-assistant",
+  "version": 15,
+  "state": "tested",
+  "created_at": 1795610708.9490476,
+  "created_by": "claude",
+  "based_on": 14,
+  "note": "문맥 크기 16384: 도구 22개와 규칙으로 8192가 가득 차 답이 잘리고 여는 조회 결과가 밀려났다",
+  "safety_change": false,
+  "changed_fields": [
+    "llm"
+  ],
+  "test_run_id": "office-assistant.v15.20261125-214839-73a6",
+  "approved_by": null,
+  "approved_at": null
+}

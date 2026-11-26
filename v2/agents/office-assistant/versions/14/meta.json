@@ -1,7 +1,7 @@
 {
   "agent_id": "office-assistant",
   "version": 14,
-  "state": "draft",
+  "state": "tested",
   "created_at": 1795592967.1975687,
   "created_by": "claude",
   "based_on": 13,
@@ -14,7 +14,7 @@
     "tests.personas",
     "actions"
   ],
-  "test_run_id": null,
+  "test_run_id": "office-assistant.v14.20261125-214500-0b8d",
   "approved_by": null,
   "approved_at": null
 }
