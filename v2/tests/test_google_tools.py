@@ -335,7 +335,7 @@ async def test_lists_come_with_a_summary_that_can_be_said_without_the_screen(gat
     summary = next(line for line in unread.text.splitlines() if line.startswith("[말할 요약]"))
     assert "읽지 않은 메일 3통" in summary and "의심스러운 메일: 3번 보안팀" in summary
     assert summary.index("의심") < summary.index("답장이 필요해 보이는 메일: 1번 김민수")       # the risk first
-    assert "화면을 보지 않아도" in unread.text and "세 통씩" in unread.text
+    assert "화면을 못 보는 사람도" in unread.text       # (reading three at a time is the agent's flow rule now)
     ads = await gateway.call(ctx(2, session="g20"), "google.list_mail", {"filter": "ads"})
     assert "[말할 요약] 광고·알림 메일 3통. 보낸 곳: 쿠팡, 무신사 등." in ads.text
     found = await gateway.call(ctx(3, session="g20"), "google.search_mail", {"query": "김민수"})

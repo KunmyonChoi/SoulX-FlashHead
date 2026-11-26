@@ -1,16 +1,16 @@
 # 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
 name: undo_cleanup
-description: 방금 한 메일 정리를 되돌린다. refs를 비우면 그 정리 전체를, 번호를 주면 그 메일만 원래대로 돌린다.
+description: 방금 한 메일 정리나 보관을 되돌린다.
 effect: write
 input_schema:
   type: object
   properties:
     report_id:
       type: string
-      description: cleanup_mail 결과의 report_id. 비우면 가장 최근 정리
+      description: 비우면 가장 최근 것
     refs:
       type: string
-      description: 되돌릴 메일의 목록 번호들. 비우면 전부
+      description: 되돌릴 번호들. 비우면 전부
 output_schema:
   type: string
   description: 모델에 전할 글

@@ -1,0 +1,16 @@
+{
+  "agent_id": "office-assistant",
+  "version": 16,
+  "state": "tested",
+  "created_at": 1795705868.1260724,
+  "created_by": "claude",
+  "based_on": 14,
+  "note": "프롬프트 줄이기: 흐름 규칙을 14개로 묶고 도구 설명과 겹치는 말을 뺐다 (문맥 8192 유지)",
+  "safety_change": false,
+  "changed_fields": [
+    "flow"
+  ],
+  "test_run_id": "office-assistant.v16.20261127-002232-9fdf",
+  "approved_by": null,
+  "approved_at": null
+}

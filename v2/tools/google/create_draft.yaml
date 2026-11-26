@@ -1,19 +1,19 @@
 # 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
 name: create_draft
-description: Gmail 임시보관함에 메일 초안만 만든다(보내지 않는다). 사용자가 '초안만 써 둬', '보내지는 말고'처럼 보내지 말라고 할 때만 쓴다. 보내려는 메일은 send_mail을 쓴다.
+description: 임시보관함에 초안만 만든다. '초안만 써 둬', '보내지는 말고'일 때만 쓴다.
 effect: write
 input_schema:
   type: object
   properties:
     to:
       type: string
-      description: 받는 사람 이름이나 메일 주소. 답장이면 비운다
+      description: 받는 사람. 답장이면 비운다
     reply_to:
       type: string
-      description: 답장할 메일의 목록 번호. 새 메일이면 비운다
+      description: 답장할 메일 번호
     subject:
       type: string
-      description: 제목. 답장이면 비워도 된다
+      description: 제목
     body:
       type: string
       description: 본문

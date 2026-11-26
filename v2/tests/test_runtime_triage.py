@@ -133,3 +133,26 @@ async def test_the_engine_lets_a_revisable_request_be_called_again():
     assert "고친 인자로 send_mail 도구를 지금 다시 호출" in told and llm.calls[4]["tools"]
     assert shown(events, "confirm")[-1]["compose"]["before"] == "잘 받았습니다. 금요일까지 드리겠습니다."
     assert "목요일까지 드리겠습니다" in events[-1].text and "금요일" not in events[-1].text
+
+
+async def test_history_gives_way_before_the_context_is_full():
+    scripts = [[text("세 통 있어요.")]] * 12
+    definition = make_definition(tool_packs=["google"], tools=TOOLS, actions=ACTIONS)
+    definition.llm.num_ctx = 8192
+    engine = Engine(definition, build_gateway(), FakeRecorder(), ScriptedLLM(scripts), now=fixed_now, simulated=True)
+    engine._opening_entries = [{"role": "user", "content": "(대화가 시작되었습니다.)"}, {"role": "tool", "content": "메뉴 " * 400}]
+    engine.history = list(engine._opening_entries)
+    for i in range(6):
+        await gather(engine.reply(f"질문 {i} " + "가" * 600))
+    assert len(engine.history) == 2 + 12
+    engine._prompt_tokens = 7000                       # room left: nothing goes
+    await gather(engine.reply("질문 6"))
+    assert len(engine.history) == 2 + 14
+    engine._prompt_tokens = 7900                       # within CONTEXT_ROOM of 8192: the oldest exchanges go
+    await gather(engine.reply("질문 7"))
+    said = [m["content"] for m in engine.history if m["role"] == "user"]
+    assert said[0].startswith("(대화가 시작") and "질문 0" not in " ".join(said) and said[-1] == "질문 7"
+    engine._prompt_tokens = 9000                       # still too much with two exchanges left: the opening goes
+    await gather(engine.reply("질문 8"))
+    said = [m["content"] for m in engine.history if m["role"] == "user"]
+    assert not said[0].startswith("(대화가 시작") and said[-1] == "질문 8" and len(said) >= 2

@@ -1,7 +1,6 @@
 # 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
 name: list_mail
-description: Gmail 받은편지함을 화면에 표로 보여 주고 번호를 붙인다. '메일 목록 보여 줘', '읽지 않은 메일', '광고 메일 보여 줘', '답장해야 할 메일', '다음 장'처럼 물으면 쓴다. 결과는
-  화면에 있으니 다 읽어 주지 말고 요점만 말한다.
+description: 받은편지함을 화면에 표로 띄우고 번호를 붙인다. '메일 보여 줘', '읽지 않은 메일', '광고 메일', '답장할 메일', '다음 장'에 쓴다.
 effect: read
 input_schema:
   type: object
@@ -13,11 +12,11 @@ input_schema:
       - reply
       - ads
       - all
-      description: unread 읽지 않음(광고 제외), reply 답장이 필요해 보임, ads 광고·알림, all 받은편지함 전체
+      description: unread 읽지 않음(광고 제외), reply 답장 필요, ads 광고·알림, all 전체
       default: unread
     page:
       type: integer
-      description: 몇 번째 장. 한 장에 10통
+      description: 몇 번째 장(한 장 10통)
       minimum: 1
       default: 1
 output_schema:

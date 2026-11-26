@@ -2,9 +2,7 @@
 # 지금 화면에 연 메일 한 통을 치우고 다음 메일을 연다. 확인 단계가 없다: 사용자가 보고 있는 한 통이고, 직접 말했고,
 # undo_cleanup으로 되돌릴 수 있다. 스팸·휴지통과 여러 통 정리는 cleanup_mail(확인 필요)로 한다.
 name: triage_mail
-description: 지금 화면에 열어 둔 메일 한 통을 보관하거나 안 읽음으로 남기고, 곧바로 목록의 다음 메일을 연다. 메일을 연 상태에서 사용자가 '보관', '보관해', '이건 치워', '됐어 보관하고 다음'이라고
-  하면 action archive, '나중에 볼게', '안 읽음으로 남겨'라고 하면 action unread로 부른다. 확인을 묻지 않고 바로 부른다. 되돌릴 수 있다. 번호로 여러 통을 정리하거나 스팸·휴지통으로
-  옮기는 일은 cleanup_mail을 쓴다.
+description: 지금 열린 메일 한 통을 치우고 다음 메일을 연다. '보관', '치워'면 archive, '나중에 볼게'면 unread. 확인을 묻지 않고 바로 부른다(되돌릴 수 있다). 스팸·휴지통·여러 통은 cleanup_mail.
 effect: write
 input_schema:
   type: object
@@ -14,7 +12,7 @@ input_schema:
       enum:
       - archive
       - unread
-      description: archive 보관(받은편지함에서 빼기), unread 안 읽음으로 남기기
+      description: archive 보관, unread 안 읽음으로 남김
   required:
   - action
 output_schema:

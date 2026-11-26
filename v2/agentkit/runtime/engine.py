@@ -27,6 +27,13 @@ from .prompt import (HANDOFF_TOOL, REPLY_LENGTHS, build_system_prompt, clock_tex
 logger = logging.getLogger("agentkit.runtime")
 
 MAX_TOOL_ROUNDS = 3        # times one reply may go back to the LLM with tool results (ARCHITECTURE 5)
+# The model's context is a hard limit: a prompt that reaches it leaves no room to answer (replies of one or two
+# tokens, 2026-11-25), and beyond it Ollama drops the oldest messages itself, the opening's lookups first. When the
+# last prompt came within CONTEXT_ROOM tokens of the context, the oldest exchanges go until CONTEXT_FREE are free.
+CONTEXT_ROOM = 700
+CONTEXT_FREE = 1800
+KEEP_EXCHANGES = 2         # the newest exchanges outlast the opening's lookups when both no longer fit
+TOKENS_PER_CHAR = 0.65     # Korean text with gemma4 (measured 0.54 to 0.61); a little high, to drop enough
 HISTORY_MESSAGES = 40      # about this many messages are kept, never starting mid-exchange
 FIRST_PIECE_CHARS = 15     # a short first piece gets the voice talking sooner
 PIECE_CHARS = 40
@@ -152,6 +159,7 @@ class Engine:
         self._opening_entries = []              # the opening's messages: head of the history, never trimmed
         self._carry = None         # (words, time): a customer turn cut off before any of its answer was heard
         self._opened = False
+        self._prompt_tokens = 0    # of the last model pass (Ollama's count): how full the context is
         self._showing = None       # the display kind in front of the customer (cards over it do not count)
         settings = dict(settings or {})
         # which screens the customer's page can draw ("mail_list,mail,..."); None: not said, every screen counts as
@@ -224,6 +232,29 @@ class Engine:
         excess = len(self.history) - pinned - HISTORY_MESSAGES
         if excess > 0:
             del self.history[pinned:pinned + excess]
+        # by size: what the last prompt measured, against the context it has to fit in
+        limit = getattr(getattr(self.definition, "llm", None), "num_ctx", 0) or 0
+        over = self._prompt_tokens - (limit - CONTEXT_FREE) if limit and self._prompt_tokens > limit - CONTEXT_ROOM else 0
+        size = lambda messages: sum(len(str(m.get("content") or "")) + len(json.dumps(m.get("tool_calls") or "", ensure_ascii=False))
+                                    for m in messages) * TOKENS_PER_CHAR
+        while over > 0 and len(self.history) > pinned + 2:
+            starts = [i for i in range(pinned, len(self.history)) if self.history[i]["role"] == "user"]
+            if pinned and len(starts) <= KEEP_EXCHANGES:
+                # what the opening looked up (the briefing's weather and news, the first mail list) has been told
+                # and can be looked up again; what was just said cannot. Without this the model's own cut would
+                # take it anyway, and the conversation with it.
+                over -= size(self.history[:pinned])
+                del self.history[:pinned]
+                self._opening_entries = []
+                pinned = 0
+                continue
+            if len(starts) <= KEEP_EXCHANGES:
+                break
+            # one exchange at a time: a customer's message and everything up to the next one
+            over -= size(self.history[pinned:starts[1]])
+            del self.history[pinned:starts[1]]
+        if over <= 0:
+            self._prompt_tokens = min(self._prompt_tokens, max(0, limit - CONTEXT_FREE))
         while len(self.history) > pinned and self.history[pinned]["role"] != "user":
             del self.history[pinned]
 
@@ -767,6 +798,8 @@ class Engine:
                     async for kind, value in stream:
                         if kind == "stats":
                             stats = value or {}
+                            if not state.speculative and isinstance(stats.get("prompt_tokens"), (int, float)):
+                                self._prompt_tokens = int(stats["prompt_tokens"])
                             continue
                         if first_token_ms is None:
                             first_token_ms = (time.perf_counter() - pass_started) * 1000
@@ -1123,6 +1156,12 @@ class Engine:
                 yield event
         finally:
             await events.aclose()
+            # the instruction has done its work; in the history it only takes room in every later prompt
+            last = self._last
+            if last is not None and getattr(last, "notice", False) and isinstance(getattr(last, "user_message", None), dict):
+                last.user_message["content"] = ("(System note: the conversation opened with today's briefing.)"
+                                                if (self.language or self.definition.language) == "en"
+                                                else "(시스템 알림: 대화를 시작하며 오늘 브리핑을 했습니다.)")
 
     async def act(self, name, arguments):
         """A touch on the screen (definition.actions): the mapped tool is called through the gateway,

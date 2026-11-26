@@ -1,31 +1,29 @@
 # 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
 name: create_event
-description: 구글 캘린더에 일정을 등록한다. 처음 호출하면 등록되지 않고 사용자에게 읽어 줄 확인 문장이 돌아온다(같은 시간 일정이 있으면 함께 알려 준다). 사용자가 동의하면 같은 인자로 다시 호출한다. 참석자에게
-  초대 메일은 보내지 않는다.
+description: 캘린더에 일정을 등록한다. 처음 호출은 확인 문장만 돌려주고(겹치는 일정도 알려 준다), 사용자가 동의하면 같은 인자로 다시 호출해야 등록된다. 초대 메일은 보내지 않는다.
 effect: write
 input_schema:
   type: object
   properties:
     title:
       type: string
-      description: '일정 제목. 예: 예산 회의'
+      description: 일정 제목
     date:
       type: string
-      description: '사용자가 말한 날짜 표현을 그대로 적는다. 예: ''다음 주 수요일'', ''내일'', ''모레'', ''11월 25일'', ''25일'', ''3일 뒤''. 직접 날짜를 계산해 바꾸지
-        않는다(서버가 계산한다). 이미 정해진 날짜면 YYYY-MM-DD도 된다'
+      description: 사용자가 말한 날짜 그대로('내일', '다음 주 수요일', '25일'). 직접 계산하지 않는다. 정해진 날짜면 YYYY-MM-DD
     start:
       type: string
-      description: '시작 시각 HH:MM(24시간). 예: 15:00'
+      description: 시작 시각 HH:MM(24시간)
     duration_min:
       type: integer
-      description: 길이(분). 말하지 않았으면 30
+      description: 길이(분). 기본 30
       default: 30
     attendees:
       type: string
-      description: '함께하는 사람 이름들을 쉼표로. 예: 김민수, 이서연'
+      description: 함께하는 사람 이름들, 쉼표로
     location:
       type: string
-      description: 장소. 말하지 않았으면 비운다
+      description: 장소
   required:
   - title
   - date

@@ -343,7 +343,10 @@ async def test_brief_is_said_after_the_opening_as_a_notice():
     events = await gather(engine.brief())
     assert events[-1].type == "done" and "맑고" in events[-1].text
     assert any("시스템 알림" in m.get("content", "") and "메뉴와 장바구니" in m.get("content", "")
-               for m in engine.history if m.get("role") == "user")
+               for m in llm.calls[-1]["messages"] if m.get("role") == "user")       # the model was given the instruction
+    # afterwards the history keeps only that a briefing was given: the instruction would ride along in every prompt
+    notes = [m["content"] for m in engine.history if m.get("role") == "user" and "시스템 알림" in m.get("content", "")]
+    assert notes == ["(시스템 알림: 대화를 시작하며 오늘 브리핑을 했습니다.)"]
     assert types(await gather(engine.brief())) == ["done"]        # once: the conversation has begun
 
 

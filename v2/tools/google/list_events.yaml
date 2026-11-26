@@ -1,17 +1,16 @@
 # 구글 캘린더·Gmail (agentkit/tools/google.py). 시험의 가상 고객은 언제나 가짜 Google을 쓴다.
 name: list_events
-description: 구글 캘린더의 일정을 날짜로 본다. '오늘 일정', '내일 뭐 있어', '이번 주 일정'처럼 물으면 쓴다.
+description: 캘린더 일정을 날짜로 본다. '오늘 일정', '내일 뭐 있어', '이번 주 일정'에 쓴다.
 effect: read
 input_schema:
   type: object
   properties:
     date:
       type: string
-      description: '사용자가 말한 날짜 표현을 그대로 적는다. 예: ''다음 주 수요일'', ''내일'', ''모레'', ''11월 25일'', ''25일'', ''3일 뒤''. 직접 날짜를 계산해 바꾸지
-        않는다(서버가 계산한다). 이미 정해진 날짜면 YYYY-MM-DD도 된다'
+      description: 사용자가 말한 날짜 그대로('내일', '다음 주 수요일', '25일'). 직접 계산하지 않는다. 정해진 날짜면 YYYY-MM-DD
     days:
       type: integer
-      description: 며칠치를 볼지. 하루면 1, 이번 주면 남은 날 수
+      description: 며칠치. 하루면 1
       minimum: 1
       maximum: 14
       default: 1
