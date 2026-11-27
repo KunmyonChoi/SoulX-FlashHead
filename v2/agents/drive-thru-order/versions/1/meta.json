@@ -1,7 +1,7 @@
 {
   "agent_id": "drive-thru-order",
   "version": 1,
-  "state": "tested",
+  "state": "deployed",
   "created_at": 1794906008.477,
   "created_by": "wp1",
   "based_on": null,
@@ -9,6 +9,6 @@
   "safety_change": false,
   "changed_fields": [],
   "test_run_id": "drive-thru-order.v1.20261120-111223-0b9f",
-  "approved_by": null,
-  "approved_at": null
+  "approved_by": "kunmyon (Claude가 사용자 지시로 처리: v1 승인)",
+  "approved_at": 1795741377.7901988
 }

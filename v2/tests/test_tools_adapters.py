@@ -185,7 +185,7 @@ async def test_http_server_outage_and_delay(shop_server):
         down = await gateway.call(make_ctx(session, 2), "get_order", {"order_id": "A1001"})
         assert down.error_type == "system_error"
         httpx.post(f"{BASE}/shop/inject", json={"delay_s": 1.0})
-        gateway._contracts["get_order"].timeout_s = 0.2
+        gateway._contracts["shop.get_order"].timeout_s = 0.2
         slow = await gateway.call(make_ctx(session, 3), "get_order", {"order_id": "A1001"})
         assert slow.error_type == "timeout"
     finally:

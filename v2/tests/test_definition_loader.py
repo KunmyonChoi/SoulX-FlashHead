@@ -58,6 +58,7 @@ def test_unknown_agent_and_version(agents):
         store.load("shop-support", 99)
     with pytest.raises(DefinitionNotFound):
         store.list_versions("../etc")
+    (agents / "clinic-intake" / "deployment.json").unlink(missing_ok=True)
     with pytest.raises(DefinitionError):          # nothing deployed and no version named
         store.load("clinic-intake")
 

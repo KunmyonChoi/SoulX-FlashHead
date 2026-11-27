@@ -48,12 +48,13 @@ def test_main_agents_are_deployed(store, agent):
 
 
 @pytest.mark.parametrize("agent", [KIOSK, *SKELETONS])
-def test_undeployed_agents_have_no_stable_version(store, agent):
-    # complete, and possibly tested, but a person has not approved and deployed them
-    versions = store.list_versions(agent)
-    assert versions and all(info.state in ("draft", "tested", "pending_approval", "approved") for info in versions)
-    assert not (V2 / "agents" / agent / "deployment.json").exists()
-    assert store.deployment(agent).stable is None
+def test_later_agents_are_complete_and_release_state_is_consistent(store, agent):
+    # complete agents that were released after the seed (2026-11-27); whatever their release state is,
+    # a stable version is a deployed one
+    versions = {info.version: info for info in store.list_versions(agent)}
+    stable = store.deployment(agent).stable
+    assert versions and (stable is None or versions[stable].state == "deployed")
+    assert [n for n, info in versions.items() if info.state == "deployed"] == ([stable] if stable else [])
     d = store.load(agent, 1)
     assert d.flow and d.handoff and d.prohibitions and d.tools
     assert d.evaluation.success and d.evaluation.extract

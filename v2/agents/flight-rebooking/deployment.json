@@ -1,0 +1,8 @@
+{
+  "agent_id": "flight-rebooking",
+  "stable": 3,
+  "canary": null,
+  "canary_percent": 0,
+  "previous_stable": null,
+  "updated_at": 1795741377.7893674
+}

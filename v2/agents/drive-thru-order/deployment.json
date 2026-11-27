@@ -1,0 +1,8 @@
+{
+  "agent_id": "drive-thru-order",
+  "stable": 1,
+  "canary": null,
+  "canary_percent": 0,
+  "previous_stable": null,
+  "updated_at": 1795741377.80259
+}
